@@ -10,9 +10,31 @@ struct Op {
 	val: String
 }
 
-#[derive(PartialEq, Eq, Debug)]
+enum IndentChange {
+	Unchanged,
+	Increased,
+	Decreased,
+	Error,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct Indent {
 	val: String
+}
+
+impl Indent {
+	fn size(&self) -> usize {
+		self.val.len()
+	}
+
+	fn subset(&self, other: &Indent) -> bool {
+		let s = self.size();
+		if other.size() < s {
+			false
+		} else {
+			self.val[0..s] == other.val[0..s]
+		}
+	}
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -26,7 +48,6 @@ enum Bracket {
 enum Token {
 	End,
 	Line,
-	Indent,
 	Deindent,
 	Number(String),
 	Name(Name),
@@ -34,9 +55,23 @@ enum Token {
 	Bracket(Bracket, bool),
 }
 
+#[derive(Clone)]
 struct Block {
 	levels: [usize; 3],
-	indent: Indent
+	indent: Indent,
+}
+
+impl Block {
+	fn ignore(&self) -> bool {
+		self.levels[0] + self.levels[1] + self.levels[2] != 0
+	}
+}
+
+#[derive(PartialEq, Eq)]
+enum TokenAction {
+	None,
+	Line,
+	Deindent
 }
 
 struct State<'c> {
@@ -46,7 +81,8 @@ struct State<'c> {
 	last_ended: &'c u8,
 	blocks: Vec<Block>,
 	indent: Indent,
-	deindent_level: usize
+	deindent_level: usize,
+	action: TokenAction
 }
 
 fn slice<'c>(start: &'c u8, end: &'c u8) -> &'c [u8] {
@@ -69,9 +105,25 @@ fn bracket_type(c: u8) -> Bracket {
 	}
 }
 
+fn compare_indent(old: &Indent, new: &Indent) -> IndentChange {
+	if old.subset(new) {
+		if new.size() > old.size() {
+			IndentChange::Increased
+		} else {
+			IndentChange::Unchanged
+		}
+	} else if new.subset(old) {
+		IndentChange::Decreased
+	} else {
+		IndentChange::Error
+	}
+}
+
 fn is_op(c: u8) -> bool {
 	match c as char {
-		'+' | '-' | '&' | '*' | '%' | '=' | '<' | '>' | '|' | '^' | '~' | ':' | '!' | '/' => true,
+		'+' | '-' | '&' | '*' | '%' | '=' |
+		'<' | '>' | '|' | '^' | '~' | ':' |
+		'!' | '/'  | ',' => true,
 		_ => false
 	}
 }
@@ -95,6 +147,127 @@ impl<'c> State<'c> {
 	fn is(&self, test: u8) -> bool {
 		self.c() == test
 	}
+
+	pub fn indent_newline(&mut self, baseline: &Indent) -> bool {
+		assert!(self.action == TokenAction::Line);
+
+		let indent = self.get_line_indent();
+		let mut r = false;
+
+		match compare_indent(baseline, &indent) {
+			IndentChange::Increased => {
+				self.blocks.push(Block { levels: [0; 3], indent: baseline.clone() });
+				r = true;
+				self.indent = indent;
+				self.next();
+			}
+			IndentChange::Error =>
+				panic!("report[Error.UnknownIndent](make_src(indent.start, indent.stop), make_src(baseline.start, baseline.stop))"),
+			_ => ()
+		}
+
+		r
+	}
+
+	fn skip_newline(&mut self) {
+		loop {
+			match self.c() {
+				0 => {
+					if self.at_end() {
+						break;
+					}
+					else {
+						panic!("err");
+						self.step();
+					}
+				}
+				13 => {
+					self.step();
+					if self.is(10) {
+						self.step()
+					}
+					break;
+				}
+				10 => {
+					self.step();
+					break;
+				}
+				_ => self.step()
+			}
+		}
+	}
+
+	fn get_line_indent(&mut self) -> Indent {
+		let start = self.pos;
+		self.skip_whitespace();
+
+		match self.c() as char {
+			'\x0D' => {
+				self.step();
+				if self.c() == 10 {
+					self.step();
+				}
+				self.get_line_indent()
+			}
+			'\x0A' => {
+				self.step();
+				self.get_line_indent()
+			}
+			'#' => {
+				self.skip_newline();
+				self.get_line_indent()
+			}
+			_ => Indent { val: str(start, self.pos) }
+		}
+	}
+
+	fn handle_line(&mut self) -> Token {
+		let mut indent = Indent { val: "".to_string() };
+
+		let ret = match self.blocks[..].last().clone() {
+			Some(b) => {
+				indent = b.indent.clone();
+				b.ignore()
+			}
+			None => true
+		};
+
+		if ret {
+			return self.next();
+		}
+
+		match compare_indent(&indent, &self.indent) {
+			IndentChange::Unchanged | IndentChange::Decreased => {
+				self.blocks.pop();
+				let mut i = 1;
+				loop {
+					match self.blocks[..].last() {
+						Some(b) => {
+							if b.ignore() {
+								break
+							}
+
+							match compare_indent(&b.indent, &self.indent) {
+								IndentChange::Unchanged | IndentChange::Decreased => (),
+								_ => break
+							}
+						}
+						_ => break
+					}
+					i += 1;
+					self.blocks.pop();
+				}
+
+				self.start = self.pos;
+				self.action = TokenAction::Deindent;
+				self.deindent_level = i * 2;
+				Token::Deindent
+			}
+			IndentChange::Increased => self.next(),
+			IndentChange::Error =>
+				panic!("report[Error.IndentMismatch](make_src(tok.indent.start, tok.indent.stop), make_src(block.indent.start, block.indent.stop))"),
+ 		}
+ 	}
 
 	fn num(&mut self) -> Token {
 		self.step();
@@ -162,6 +335,7 @@ impl<'c> State<'c> {
 			let p = self.pop_bracket_level(result);
 			if p > 0 {
 				self.deindent_level = p * 2 - 1;
+				self.action = TokenAction::Deindent;
 				return Token::Deindent;
 			}
 		}
@@ -201,6 +375,7 @@ impl<'c> State<'c> {
 	fn newline(&mut self) -> Token {
 		self.step();
 		self.deindent_level = 0;
+		self.action = TokenAction::Line;
 		Token::Line
 	}
 
@@ -212,6 +387,7 @@ impl<'c> State<'c> {
 		}
 
 		self.deindent_level = 0;
+		self.action = TokenAction::Line;
 		Token::Line
 	}
 
@@ -238,9 +414,40 @@ impl<'c> State<'c> {
 	}
 
 	fn next(&mut self) -> Token {
+		self.action = TokenAction::None;
 		self.last_ended = self.pos;
 		self.start = self.pos;
 		self.ctx.jump_table[self.c() as usize](self)
+	}
+
+	fn next_token(&mut self) -> Token {
+		match self.action {
+			TokenAction::None => self.next(),
+			TokenAction::Line => {
+				match self.deindent_level {
+					0 => {
+						self.indent = self.get_line_indent();
+						self.handle_line()
+					}
+					1 => self.next(),
+					_ => {
+						self.deindent_level -= 1;
+						self.action = TokenAction::Deindent;
+						Token::Deindent
+					}
+				}
+
+			}
+			TokenAction::Deindent => {
+				if self.deindent_level == 1 {
+					self.next()
+				} else {
+					self.deindent_level -= 1;
+					self.action = TokenAction::Line;
+					Token::Line
+				}
+			}
+		}
 	}
 }
 
@@ -315,7 +522,8 @@ impl<'c> Context<'c> {
 			last_ended: &self.src[0],
 			blocks: vec![],
 			indent: Indent { val: "".to_string() },
-			deindent_level: 0
+			deindent_level: 0,
+			action: TokenAction::None,
 		}
 	}
 }
@@ -327,7 +535,7 @@ pub fn lex(src: &str) {
 	let mut st = ctx.new_state();
 
 	loop {
-		let token = st.next();
+		let token = st.next_token();
 
 		if token == Token::End {
 			break

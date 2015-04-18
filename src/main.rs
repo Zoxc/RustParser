@@ -1,6 +1,10 @@
 mod lexer;
+use std::io::Read;
 
 fn main() {
-    println!("Hello, world!");
-    lexer::lex("T1&*(6)");
+    let path = std::path::Path::new("test.txt");
+    let mut hw_file = std::fs::File::open(&path).unwrap();
+    let mut data = "".to_string();
+    hw_file.read_to_string(&mut data).ok();
+    lexer::lex(&data[..]);
 }
