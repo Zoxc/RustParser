@@ -1,0 +1,10 @@
+[package]
+name = "parser"
+version = "0.1.0"
+authors = ["Zoxc <zoxc32@gmail.com>"]
+
+[dependencies.afl-coverage-plugin]
+git = "https://github.com/kmcallister/afl.rs"
+
+[dependencies.afl-coverage]
+git = "https://github.com/kmcallister/afl.rs"

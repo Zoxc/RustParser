@@ -1,4 +1,12 @@
+#![feature(plugin)]
+
+#![plugin(afl_coverage_plugin)]
+
+extern crate afl_coverage;
+
+mod interner;
 mod lexer;
+mod parser;
 use std::io::Read;
 
 fn main() {
@@ -6,5 +14,5 @@ fn main() {
     let mut hw_file = std::fs::File::open(&path).unwrap();
     let mut data = "".to_string();
     hw_file.read_to_string(&mut data).ok();
-    lexer::lex(&data[..]);
+    parser::parse(&data[..]);
 }

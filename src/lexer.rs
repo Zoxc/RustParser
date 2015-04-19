@@ -1,41 +1,30 @@
 use std;
+use interner::{Interner, Val};
 
-#[derive(PartialEq, Eq, Debug)]
-struct Name {
-	val: String
-}
+macro_rules! intern_type {
+    ($n:ident) => {
 
-#[derive(PartialEq, Eq, Debug)]
-struct Op {
-	val: String
-}
+		#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+		pub struct $n(u32);
 
-enum IndentChange {
-	Unchanged,
-	Increased,
-	Decreased,
-	Error,
-}
+		impl Val for $n {
+			fn new(val: u32) -> $n {
+				$n(val)
+			}
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-struct Indent {
-	val: String
-}
-
-impl Indent {
-	fn size(&self) -> usize {
-		self.val.len()
-	}
-
-	fn subset(&self, other: &Indent) -> bool {
-		let s = self.size();
-		if other.size() < s {
-			false
-		} else {
-			self.val[0..s] == other.val[0..s]
+			fn usize(&self) -> usize {
+				self.0 as usize
+			}
 		}
-	}
+    };
 }
+
+intern_type!(Name);
+intern_type!(Op);
+intern_type!(Num);
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Indent(usize);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Bracket {
@@ -45,17 +34,17 @@ enum Bracket {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-enum Token {
+pub enum Token {
 	End,
 	Line,
 	Deindent,
-	Number(String),
+	Num(Num),
 	Name(Name),
 	Op(Op),
 	Bracket(Bracket, bool),
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 struct Block {
 	levels: [usize; 3],
 	indent: Indent,
@@ -74,26 +63,52 @@ enum TokenAction {
 	Deindent
 }
 
-struct State<'c> {
-	ctx: &'c Context<'c>,
+pub struct Interners {
+	pub name: Interner<Name>,
+	pub op: Interner<Op>,
+	pub num: Interner<Num>,
+}
+
+impl Interners {
+	pub fn new() -> Interners {
+		Interners {
+			name: Interner::new(),
+			op: Interner::new(),
+			num: Interner::new(),
+		}
+	}
+}
+
+pub struct Context<'c> {
+	end: &'c u8,
+	jump_table: [fn (&mut Context<'c>) -> Token; 256],
 	pos: &'c u8,
 	start: &'c u8,
 	last_ended: &'c u8,
 	blocks: Vec<Block>,
 	indent: Indent,
 	deindent_level: usize,
-	action: TokenAction
+	action: TokenAction,
+	pub interners: &'c Interners,
 }
+
+fn offset<'c>(start: &'c u8, end: &'c u8) -> usize {
+	end as *const u8 as usize - start as *const u8 as usize
+}
+
 
 fn slice<'c>(start: &'c u8, end: &'c u8) -> &'c [u8] {
 	unsafe {
-		std::slice::from_raw_parts(start as *const u8,
-			end as *const u8 as usize - start as *const u8 as usize)
+		std::slice::from_raw_parts(start as *const u8, offset(start, end))
 	}
 }
 
 fn str<'c>(start: &'c u8, end: &'c u8) -> String {
 	String::from_utf8_lossy(slice(start, end)).into_owned()
+}
+
+fn intern<'c, T: Val + Copy>(interner: &'c Interner<T>, start: &'c u8, end: &'c u8) -> T {
+	interner.intern(std::str::from_utf8(slice(start, end)).unwrap())
 }
 
 fn bracket_type(c: u8) -> Bracket {
@@ -102,20 +117,6 @@ fn bracket_type(c: u8) -> Bracket {
 		'[' | ']' => Bracket::Square,
 		'{' | '}' => Bracket::Brace,
 		_ => panic!()
-	}
-}
-
-fn compare_indent(old: &Indent, new: &Indent) -> IndentChange {
-	if old.subset(new) {
-		if new.size() > old.size() {
-			IndentChange::Increased
-		} else {
-			IndentChange::Unchanged
-		}
-	} else if new.subset(old) {
-		IndentChange::Decreased
-	} else {
-		IndentChange::Error
 	}
 }
 
@@ -128,9 +129,74 @@ fn is_op(c: u8) -> bool {
 	}
 }
 
-impl<'c> State<'c> {
+impl<'c> Context<'c> {
+	pub fn new(src: &'c str, interners: &'c Interners) -> Context<'c> {
+		let src = src.as_bytes();
+
+		let mut result = Context {
+			end: &src[src.len() - 1],
+			jump_table: [Context::unknown; 256],
+			pos: &src[0],
+			start: &src[0],
+			last_ended: &src[0],
+			blocks: vec![],
+			indent: Indent(0),
+			deindent_level: 0,
+			action: TokenAction::None,
+			interners: interners,
+		};
+
+		assert!(*result.end == 0);
+
+		result.jump_table[0] = Context::end;
+
+		macro_rules! set {
+		    ($c:expr, $f:expr) => {{
+				result.jump_table[$c as usize] = $f;
+		    }};
+		}
+
+		macro_rules! set_range {
+		    ($b:expr, $e:expr, $f:expr) => {{
+		    	for c in ($b as usize)..($e as usize + 1) {
+					set!(c as u8 as char, $f);
+				}
+		    }};
+		}
+		
+		for c in 0..128 {
+			if is_op(c) {
+				set!(c as char, Context::op);
+			}
+		}
+
+		set!(' ', Context::whitespace);
+		set!(9, Context::whitespace);
+
+		set!(10, Context::newline);
+		set!(13, Context::carrage_return);
+
+		set!('{', Context::push);
+		set!('[', Context::push);
+		set!('(', Context::push);
+
+		set!('}', Context::pop);
+		set!(']', Context::pop);
+		set!(')', Context::pop);
+
+		set!('_', Context::ident);
+		set_range!('A', 'Z', Context::ident);
+		set_range!('a', 'z', Context::ident);
+
+		set_range!('0', '9', Context::num);
+
+		result.indent = result.get_line_indent();
+
+		result
+	}
+
 	fn succ(&self) -> &'c u8 {
-		assert!(self.pos != self.ctx.end);
+		assert!(self.pos != self.end);
 		unsafe {
 			std::mem::transmute((self.pos as *const u8).offset(1))
 		}
@@ -152,21 +218,16 @@ impl<'c> State<'c> {
 		assert!(self.action == TokenAction::Line);
 
 		let indent = self.get_line_indent();
-		let mut r = false;
 
-		match compare_indent(baseline, &indent) {
-			IndentChange::Increased => {
-				self.blocks.push(Block { levels: [0; 3], indent: baseline.clone() });
-				r = true;
-				self.indent = indent;
-				self.next();
-			}
-			IndentChange::Error =>
-				panic!("report[Error.UnknownIndent](make_src(indent.start, indent.stop), make_src(baseline.start, baseline.stop))"),
-			_ => ()
+		if indent.0 > baseline.0 {
+			self.blocks.push(Block { levels: [0; 3], indent: *baseline });
+			self.indent = indent;
+			self.next();
+
+			true
+		} else {
+			false
 		}
-
-		r
 	}
 
 	fn skip_newline(&mut self) {
@@ -199,6 +260,14 @@ impl<'c> State<'c> {
 
 	fn get_line_indent(&mut self) -> Indent {
 		let start = self.pos;
+
+		while self.is(32) {
+			self.step()
+		}
+
+		if self.is(9) {
+			panic!("tab indentation not allowed");
+		}
 		self.skip_whitespace();
 
 		match self.c() as char {
@@ -217,16 +286,16 @@ impl<'c> State<'c> {
 				self.skip_newline();
 				self.get_line_indent()
 			}
-			_ => Indent { val: str(start, self.pos) }
+			_ => Indent(offset(start, self.pos))
 		}
 	}
 
 	fn handle_line(&mut self) -> Token {
-		let mut indent = Indent { val: "".to_string() };
+		let mut indent = Indent(0);
 
-		let ret = match self.blocks[..].last().clone() {
+		let ret = match self.blocks[..].last() {
 			Some(b) => {
-				indent = b.indent.clone();
+				indent = b.indent;
 				b.ignore()
 			}
 			None => true
@@ -236,37 +305,33 @@ impl<'c> State<'c> {
 			return self.next();
 		}
 
-		match compare_indent(&indent, &self.indent) {
-			IndentChange::Unchanged | IndentChange::Decreased => {
-				self.blocks.pop();
-				let mut i = 1;
-				loop {
-					match self.blocks[..].last() {
-						Some(b) => {
-							if b.ignore() {
-								break
-							}
-
-							match compare_indent(&b.indent, &self.indent) {
-								IndentChange::Unchanged | IndentChange::Decreased => (),
-								_ => break
-							}
+		if self.indent.0 <= indent.0 {
+			self.blocks.pop();
+			let mut i = 1;
+			loop {
+				match self.blocks[..].last() {
+					Some(b) => {
+						if b.ignore() {
+							break;
 						}
-						_ => break
-					}
-					i += 1;
-					self.blocks.pop();
-				}
 
-				self.start = self.pos;
-				self.action = TokenAction::Deindent;
-				self.deindent_level = i * 2;
-				Token::Deindent
+						if self.indent.0 > b.indent.0 {
+							break;
+						}
+					}
+					_ => break
+				}
+				i += 1;
+				self.blocks.pop();
 			}
-			IndentChange::Increased => self.next(),
-			IndentChange::Error =>
-				panic!("report[Error.IndentMismatch](make_src(tok.indent.start, tok.indent.stop), make_src(block.indent.start, block.indent.stop))"),
- 		}
+
+			self.start = self.pos;
+			self.action = TokenAction::Deindent;
+			self.deindent_level = i * 2;
+			Token::Deindent
+		} else {
+			self.next()
+		}
  	}
 
 	fn num(&mut self) -> Token {
@@ -279,7 +344,7 @@ impl<'c> State<'c> {
 			}
 		}
 
-		Token::Number(str(self.start, self.pos))
+		Token::Num(intern(&self.interners.num, self.start, self.pos))
 	}
 
 	fn ident(&mut self) -> Token {
@@ -292,11 +357,11 @@ impl<'c> State<'c> {
 			}
 		}
 
-		Token::Name(Name { val: str(self.start, self.pos) })
+		Token::Name(intern(&self.interners.name, self.start, self.pos))
 	}
 
 	fn at_end(&self) -> bool {
-		self.pos == self.ctx.end
+		self.pos == self.end
 	}
 
 	fn push(&mut self) -> Token {
@@ -354,7 +419,7 @@ impl<'c> State<'c> {
 			}
 		}
 
-		Token::Op(Op { val: str(self.start, self.pos) })
+		Token::Op(intern(&self.interners.op, self.start, self.pos))
 	}
 
 	fn skip_whitespace(&mut self) {
@@ -403,7 +468,7 @@ impl<'c> State<'c> {
 		loop {
 			self.step();
 
-			if self.ctx.jump_table[self.c() as usize] as  *const u8 != State::unknown as *const u8 {
+			if self.jump_table[self.c() as usize] as  *const u8 != Context::unknown as *const u8 {
 				break
 			}
 		}
@@ -417,10 +482,10 @@ impl<'c> State<'c> {
 		self.action = TokenAction::None;
 		self.last_ended = self.pos;
 		self.start = self.pos;
-		self.ctx.jump_table[self.c() as usize](self)
+		self.jump_table[self.c() as usize](self)
 	}
 
-	fn next_token(&mut self) -> Token {
+	pub fn next_token(&mut self) -> Token {
 		match self.action {
 			TokenAction::None => self.next(),
 			TokenAction::Line => {
@@ -448,100 +513,5 @@ impl<'c> State<'c> {
 				}
 			}
 		}
-	}
-}
-
-type Handler<'c> = fn (&mut State<'c>) -> Token;
-
-struct Context<'c> {
-	src: &'c [u8],
-	end: &'c u8,
-	jump_table: [Handler<'c>; 256],
-}
-
-
-impl<'c> Context<'c> {
-	fn new(src: &'c str) -> Context<'c> {
-		let src = src.as_bytes();
-		let mut result = Context {
-			src: src,
-			end: &src[src.len() - 1],
-			jump_table: [State::unknown; 256]
-		};
-
-		result.jump_table[0] = State::end;
-
-		macro_rules! set {
-		    ($c:expr, $f:expr) => {{
-				result.jump_table[$c as usize] = $f;
-		    }};
-		}
-
-		macro_rules! set_range {
-		    ($b:expr, $e:expr, $f:expr) => {{
-		    	for c in ($b as usize)..($e as usize + 1) {
-					set!(c as u8 as char, $f);
-				}
-		    }};
-		}
-		
-		for c in 0..128 {
-			if is_op(c) {
-				set!(c as char, State::op);
-			}
-		}
-
-		set!(' ', State::whitespace);
-		set!(9, State::whitespace);
-
-		set!(10, State::newline);
-		set!(13, State::carrage_return);
-
-		set!('{', State::push);
-		set!('[', State::push);
-		set!('(', State::push);
-
-		set!('}', State::pop);
-		set!(']', State::pop);
-		set!(')', State::pop);
-
-		set!('_', State::ident);
-		set_range!('A', 'Z', State::ident);
-		set_range!('a', 'z', State::ident);
-
-		set_range!('0', '9', State::num);
-
-		result
-	}
-
-	fn new_state(&'c self) -> State<'c> {
-		State {
-			ctx: self,
-			pos: &self.src[0],
-			start: &self.src[0],
-			last_ended: &self.src[0],
-			blocks: vec![],
-			indent: Indent { val: "".to_string() },
-			deindent_level: 0,
-			action: TokenAction::None,
-		}
-	}
-}
-
-pub fn lex(src: &str) {
-	let src = format!("{}\0", src);
-	let ctx = Context::new(&src);
-
-	let mut st = ctx.new_state();
-
-	loop {
-		let token = st.next_token();
-
-		if token == Token::End {
-			break
-		}
-
-
-    	println!("{:?}", token);
 	}
 }
