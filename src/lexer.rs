@@ -67,6 +67,10 @@ struct Block {
 }
 
 impl Block {
+	fn new(indent: Indent) -> Block {
+		Block { levels: [0; 3], indent: indent }
+	}
+
 	fn ignore(&self) -> bool {
 		self.levels[0] + self.levels[1] + self.levels[2] != 0
 	}
@@ -76,11 +80,13 @@ pub struct Lexer<'c> {
 	pos: &'c u8,
 	begin: &'c u8,
 	end: &'c u8,
+	line_start: &'c u8,
 	jump_table: [fn (&mut Lexer<'c>) -> Spanned<Token>; 256],
 	pub token: Token,
 	pub span: Span,
 	blocks: Vec<Block>,
 	pub indent: Indent,
+	deindent_bracket: bool,
 	deindent_level: usize,
 	pub src: &'c Source,
 	pub ctx: &'c Context,
@@ -96,6 +102,13 @@ fn bracket_type(c: u8) -> Bracket {
 		'[' | ']' => Bracket::Square,
 		'{' | '}' => Bracket::Brace,
 		_ => panic!()
+	}
+}
+
+fn is_ident(c: u8) -> bool {
+	match c as char {
+		'_' | '0'...'9' | 'A'...'Z' | 'a'...'z' => true,
+		_ => false
 	}
 }
 
@@ -126,15 +139,17 @@ impl<'c> Lexer<'c> {
 	pub fn new(source: &'c Source) -> Lexer<'c> {
 		let src = source.src.as_bytes();
 
-		let mut result = Lexer {
+		let mut result: Lexer = Lexer {
 			token: Token::End,
 			span: Span { start: 0, len: 0},
 			begin: &src[0],
+			line_start: &src[0],
 			end: &src[src.len() - 1],
 			jump_table: [Lexer::unknown; 256],
 			pos: &src[0],
-			blocks: vec![],
+			blocks: vec![Block::new(Indent(0))],
 			indent: Indent(0),
+			deindent_bracket: false,
 			deindent_level: 0,
 			src: source,
 			ctx: &source.ctx,
@@ -184,11 +199,17 @@ impl<'c> Lexer<'c> {
 
 		set_range!('0', '9', Lexer::num);
 
-		result.indent = result.get_line_indent();
+		let mut pos = result.pos;
+		result.indent = result.get_line_indent(&mut pos, true).0;
+		result.pos = pos;
 
 		result.next_token();
 
 		result
+	}
+
+	pub fn column(&self) -> Indent {
+		Indent(self.span.start as usize - offset(self.begin, self.line_start))
 	}
 
 	fn msg(&self, span: Span, msg: Msg) {
@@ -212,15 +233,19 @@ impl<'c> Lexer<'c> {
 		}
 	}
 
-	fn succ(&self) -> &'c u8 {
-		debug_assert!(self.pos != self.end);
+	fn succ(&self, pos: &'c u8) -> &'c u8 {
+		debug_assert!(pos != self.end);
 		unsafe {
-			std::mem::transmute((self.pos as *const u8).offset(1))
+			std::mem::transmute((pos as *const u8).offset(1))
 		}
 	}
 
+	fn step_(&self, pos: &mut &'c u8) {
+		*pos = self.succ(*pos);
+	}
+
 	fn step(&mut self) {
-		self.pos = self.succ();
+		self.pos = self.succ(self.pos);
 	}
 
 	fn c(&self) -> u8 {
@@ -231,14 +256,12 @@ impl<'c> Lexer<'c> {
 		self.c() == test
 	}
 
-	pub fn indent_newline(&mut self, baseline: &Indent) -> bool {
+	pub fn indent_newline(&mut self, baseline: Indent, fallback: Option<Indent>) -> bool {
 		debug_assert!(self.token == Token::Line);
+		debug_assert!(fallback.map(|i| baseline.0 <= i.0).unwrap_or(true));
 
-		let indent = self.get_line_indent();
-
-		if indent.0 > baseline.0 {
-			self.blocks.push(Block { levels: [0; 3], indent: *baseline });
-			self.indent = indent;
+		if self.indent.0 > baseline.0 {
+			self.blocks.push(Block::new(fallback.unwrap_or(baseline)));
 			self.next_token();
 
 			true
@@ -246,108 +269,6 @@ impl<'c> Lexer<'c> {
 			false
 		}
 	}
-
-	fn skip_newline(&mut self) {
-		loop {
-			match self.c() {
-				0 => {
-					if self.at_end() {
-						break;
-					}
-					else {
-						self.msg(self.span(self.pos, self.succ()), Msg::UnknownChars("\\x00".to_string()));
-						self.step();
-					}
-				}
-				13 => {
-					self.step();
-					if self.is(10) {
-						self.step()
-					}
-					break;
-				}
-				10 => {
-					self.step();
-					break;
-				}
-				_ => self.step()
-			}
-		}
-	}
-
-	fn get_line_indent(&mut self) -> Indent {
-		let start = self.pos;
-
-		while self.is(32) {
-			self.step()
-		}
-
-		if self.is(9) {
-			self.msg(self.span(self.pos, self.succ()), Msg::IllegalTab);
-		}
-		self.skip_whitespace();
-
-		match self.c() as char {
-			'\x0D' => {
-				self.step();
-				if self.c() == 10 {
-					self.step();
-				}
-				self.get_line_indent()
-			}
-			'\x0A' => {
-				self.step();
-				self.get_line_indent()
-			}
-			'#' => {
-				self.skip_newline();
-				self.get_line_indent()
-			}
-			_ => Indent(offset(start, self.pos))
-		}
-	}
-
-	fn handle_line(&mut self) -> Spanned<Token> {
-		let mut indent = Indent(0);
-
-		let ret = match self.blocks[..].last() {
-			Some(b) => {
-				indent = b.indent;
-				b.ignore()
-			}
-			None => true
-		};
-
-		if ret {
-			return self.next();
-		}
-
-		if self.indent.0 <= indent.0 {
-			self.blocks.pop();
-			let mut i = 1;
-			loop {
-				match self.blocks[..].last() {
-					Some(b) => {
-						if b.ignore() {
-							break;
-						}
-
-						if self.indent.0 > b.indent.0 {
-							break;
-						}
-					}
-					_ => break
-				}
-				i += 1;
-				self.blocks.pop();
-			}
-
-			self.deindent_level = i * 2;
-			spanned!(self, Token::Deindent)
-		} else {
-			self.next()
-		}
- 	}
 
 	fn num(&mut self) -> Spanned<Token> {
 		let s = span!(self, {
@@ -368,15 +289,31 @@ impl<'c> Lexer<'c> {
 		let s = span!(self, {
 			self.step();
 
-			loop {
-				match self.c() as char {
-					'_' | '0'...'9' | 'A'...'Z' | 'a'...'z' => { self.step() },
-					_ => break
-				}
+			while is_ident(self.c()) {
+				self.step();
 			}
 		});
 
 		Spanned::new(s, Token::Name(self.intern(&self.ctx.interners.name, s)))
+	}
+
+	pub fn peek_ident(&self) -> Option<Name> {
+		let mut pos = self.pos;
+		self.get_line_indent(&mut pos, false);
+
+		let start = pos;
+
+		if !is_ident(*pos) {
+			return None;
+		} else {
+			self.step_(&mut pos);
+		}
+
+		while is_ident(*pos) {
+			self.step_(&mut pos);
+		}
+
+		Some(self.intern(&self.ctx.interners.name, self.span(start, pos)))
 	}
 
 	fn op(&mut self) -> Spanned<Token> {
@@ -391,10 +328,6 @@ impl<'c> Lexer<'c> {
 		});
 
 		Spanned::new(s, Token::Op(self.intern(&self.ctx.interners.op, s)))
-	}
-
-	fn at_end(&self) -> bool {
-		self.pos == self.end
 	}
 
 	fn push(&mut self) -> Spanned<Token> {
@@ -422,36 +355,33 @@ impl<'c> Lexer<'c> {
 			if self.blocks[i].levels[bracket as usize] > 0 {
 				self.blocks[i].levels[bracket as usize] -= 1;
 
+				let r = self.blocks.len() - i - 1;
 				self.blocks.truncate(i + 1);
-				return self.blocks.len() - i;
+				return r;
 			}
 		}
 	}
 
 	fn pop(&mut self) -> Spanned<Token> {
-		fn pop_impl<'c>(this: &mut Lexer<'c>) -> Token {
-			let result = bracket_type(this.c());
-
-			if !this.blocks.is_empty() {
-				let p = this.pop_bracket_level(result);
-				if p > 0 {
-					this.deindent_level = p * 2 - 1;
-					return Token::Deindent;
-				}
+		spanned!(self, {
+			let result = bracket_type(self.c());
+			let p = self.pop_bracket_level(result);
+				println!("POP {} {} {}", p, self.blocks.len(), self.blocks[0].levels[0]);
+			if p > 0 {
+				self.deindent_level = p;
+				self.deindent_bracket = true;
+				Token::Deindent
+			} else {
+				self.step();
+				Token::Bracket(result, false)
 			}
-	 
-			this.step();
-
-			Token::Bracket(result, false)
-		}
-
-		spanned!(self, pop_impl(self))
+		})
 	}
 
-	fn skip_whitespace(&mut self) {
+	fn skip_whitespace(&self, pos: &mut &'c u8) {
 		loop {
-			match self.c() {
-				32 | 9 => self.step(),
+			match **pos {
+				32 | 9 => self.step_(pos),
 				_ => break
 			}
 		}
@@ -459,14 +389,106 @@ impl<'c> Lexer<'c> {
 
 	fn whitespace(&mut self) -> Spanned<Token> {
 		self.step();
-		self.skip_whitespace();
+		let mut pos = self.pos;
+		self.skip_whitespace(&mut pos);
+		self.pos = pos;
 		self.next()
+	}
+
+	fn can_deindent(&mut self) -> bool {
+		let b = self.blocks[..].last().unwrap();
+
+		if b.ignore() {
+			false
+		} else {
+			self.blocks.len() > 2 && self.indent.0 <= b.indent.0 
+		}
+	}
+
+	fn skip_newline(&self, pos: &mut &'c u8, report: bool) {
+		loop {
+			match **pos {
+				0 => {
+					if self.end == *pos {
+						break;
+					}
+					else {
+						if report {
+							self.msg(self.span(*pos, self.succ(*pos)), Msg::UnknownChars("\\x00".to_string()));
+						}
+						self.step_(pos);
+					}
+				}
+				13 => {
+					self.step_(pos);
+					if **pos == 10 {
+						self.step_(pos)
+					}
+					break;
+				}
+				10 => {
+					self.step_(pos);
+					break;
+				}
+				_ => self.step_(pos)
+			}
+		}
+	}
+
+	fn get_line_indent(&self, pos: &mut &'c u8, report: bool) -> (Indent, &'c u8) {
+		let start = *pos;
+
+		while **pos == 32 {
+			self.step_(pos);
+		}
+
+		if **pos == 9 && report {
+			self.msg(self.span(*pos, self.succ(*pos)), Msg::IllegalTab);
+		}
+		self.skip_whitespace(pos);
+
+		match **pos as char {
+			'\x0D' => {
+				self.step_(pos);
+				if **pos == 10 {
+					self.step_(pos);
+				}
+				self.get_line_indent(pos, report)
+			}
+			'\x0A' => {
+				self.step_(pos);
+				self.get_line_indent(pos, report)
+			}
+			'#' => {
+				self.skip_newline(pos, report);
+				self.get_line_indent(pos, report)
+			}
+			_ => (Indent(offset(start, *pos)), start)
+		}
+	}
+
+	fn make_line(&mut self) -> Spanned<Token> {
+		let mut pos = self.pos;
+		let (indent, line_start) = self.get_line_indent(&mut pos, false);
+		self.pos = pos;
+		self.indent = indent;
+		self.line_start = line_start;
+
+		let mut i = 0;
+
+		while self.can_deindent() {
+			self.blocks.pop();
+			i += 1;
+		}
+
+		self.deindent_bracket = false;
+		self.deindent_level = i;
+		spanned!(self, if i > 0 { Token::Deindent } else { Token::Line })
 	}
 
 	fn newline(&mut self) -> Spanned<Token> {
 		self.step();
-		self.deindent_level = 0;
-		spanned!(self, Token::Line)
+		self.make_line()
 	}
 
 	fn carrage_return(&mut self) -> Spanned<Token> {
@@ -476,12 +498,11 @@ impl<'c> Lexer<'c> {
 			self.step();
 		}
 
-		self.deindent_level = 0;
-		spanned!(self, Token::Line)
+		self.make_line()
 	}
 
 	fn end(&mut self) -> Spanned<Token> {
-		if self.at_end() {
+		if self.pos == self.end {
 			spanned!(self, Token::End)
 		} else {
 			self.unknown()
@@ -510,26 +531,20 @@ impl<'c> Lexer<'c> {
 
 	pub fn next_token(&mut self) {
 		let r = match self.token {
-			Token::Line => {
-				match self.deindent_level {
-					0 => {
-						self.indent = self.get_line_indent();
-						self.handle_line()
-					}
-					1 => self.next(),
-					_ => {
-						self.deindent_level -= 1;
-						Spanned::new(self.span, Token::Deindent)
-					}
-				}
-
-			}
 			Token::Deindent => {
 				if self.deindent_level == 1 {
-					self.next()
+					if self.deindent_bracket {
+						spanned!(self, {
+							let result = bracket_type(self.c());
+							self.step();
+							Token::Bracket(result, false)
+						})
+					} else {
+						spanned!(self, Token::Line)
+					}
 				} else {
 					self.deindent_level -= 1;
-					Spanned::new(self.span, Token::Line)
+					Spanned::new(self.span, Token::Deindent)
 				}
 			}
 			_ => self.next(),

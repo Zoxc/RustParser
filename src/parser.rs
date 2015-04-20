@@ -115,20 +115,23 @@ impl<'c> Parser<'c> {
 	}
 
 	fn _if(&mut self) -> bool {
+		let pos = self.lexer.column();
 		let baseline = self.lexer.indent;
 		self.step();
-		self.scope(baseline, |s| s.entries(Parser::global));
+		self.scope(baseline, Some(pos), |s| s.entries(Parser::global));
 
-		if self.is(Token::Name(KW_ELSE)) {
+    	self.print(&format!("ELSE Tok {:?}", self.lexer.token));
+		if self.is(Token::Line) && self.lexer.peek_ident() == Some(KW_ELSE) {
+			self.step();
+			debug_assert!(self.is(Token::Name(KW_ELSE)));
 			let else_baseline = self.lexer.indent;
 			self.step();
 
 			if self.is(Token::Name(KW_IF)) {
 				self._if();
 			} else {
-				self.scope(else_baseline, |s| s.entries(Parser::global));
+				self.scope(else_baseline, None, |s| s.entries(Parser::global));
 			}
-
 		}
 
 		true
@@ -140,7 +143,7 @@ impl<'c> Parser<'c> {
 			Token::Name(KW_DATA) => {
 				let baseline = self.lexer.indent;
 				self.step();
-				self.scope(baseline, |s| s.entries(Parser::global));
+				self.scope(baseline, None, |s| s.entries(Parser::global));
 				Some(true)
 			}
 			Token::Name(KW_RETURN) => {
@@ -161,16 +164,16 @@ impl<'c> Parser<'c> {
 		}
 	}
 
-	fn scope<F, R>(&mut self, baseline: Indent, term: F) -> Option<R> where F : FnOnce(&mut Self) -> R {
+	fn scope<F, R>(&mut self, baseline: Indent, pos: Option<Indent>, term: F) -> Option<R> where F : FnOnce(&mut Self) -> R {
 		if self.is(Token::Line) {
-			if self.lexer.indent_newline(&baseline) {
+			if self.lexer.indent_newline(baseline, pos) {
     			self.print("New scope");
 				let r = term(self);
 
 				if !self.is(Token::End) {
 					self.expect(Token::Deindent);
 				}
-				
+
     			self.print("Done scope");
 
 				return Some(r);
