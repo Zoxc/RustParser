@@ -1,29 +1,44 @@
 use lexer;
 use interner::{Val, Interner, RcStr};
 use std::borrow::Borrow;
-use lexer::{Interners, Token, Indent, Name, Op};
+use std::rc::Rc;
+use lexer::{Token, Indent, Span};
+use misc;
+use misc::{Interners, Context, Source, Name, Op};
 
 pub fn token_parser(src: &str) {
-	let i = Interners::new();
-	let src = format!("{}\0", src);
+	let src = Source::new(Rc::new(Context::new()), "input".to_string(), src);
 
-	let mut ctx = lexer::Context::new(&src, &i);
+	let mut ctx = lexer::Lexer::new(&src);
 
 	loop {
-		let token = ctx.next_token();
+		ctx.next_token();
 
-		if token == Token::End {
+		if ctx.token == Token::End {
 			break
 		}
 
 
-    	println!("{:?}", token);
+    	println!("{:?}", ctx.token);
 	}
 }
 
+pub enum Msg {
+	ExpectedToken(Token, Token)
+}
+
+impl Msg {
+	pub fn msg(&self, src: &Source) -> String {
+		match *self {
+			Msg::ExpectedToken(expected, found) => format!("Expected {:?}, but found {:?}", expected, found),
+		}
+	}
+}
+
+
 struct Parser<'c> {
-	lexer: lexer::Context<'c>,
-	curr: Token,
+	lexer: lexer::Lexer<'c>,
+	last_ended: u32,
 }
 
 fn get<T: Val + Copy>(interner: &Interner<T>, val: T) -> RcStr {
@@ -31,40 +46,58 @@ fn get<T: Val + Copy>(interner: &Interner<T>, val: T) -> RcStr {
 }
 
 impl<'c> Parser<'c> {
-	pub fn new(src: &'c str, interners: &'c Interners) -> Parser<'c> {
-		let mut lexer = lexer::Context::new(src, interners);
+	pub fn new(src: &'c Source) -> Parser<'c> {
+		let mut lexer = lexer::Lexer::new(src);
 		let curr = lexer.next_token();
+
+    	//println!("Tok {:?}", curr);
 
 		Parser {
 			lexer: lexer,
-			curr: curr,
+			last_ended: 0,
 		}
 	}
 
+	fn msg(&self, span: Span, msg: Msg) {
+		self.lexer.src.msg(span, misc::Msg::Parser(msg));
+	}
+
+	fn tok(&self) -> Token {
+		self.lexer.token
+	}
+
+	fn is(&self, tok: Token) -> bool {
+		self.lexer.token == tok
+	}
+
 	fn step(&mut self) {
-		self.curr = self.lexer.next_token()
+		self.last_ended = self.lexer.span.start + self.lexer.span.len;
+		self.lexer.next_token();
+    	println!("Tok {:?}", self.lexer.token);
 	}
 
 	fn expect(&mut self, tok: Token) {
-		if self.curr == tok {
+		if self.is(tok) {
 			self.step()
 		} else {
-			panic!("expected token!");
+			self.msg(self.lexer.span, Msg::ExpectedToken(tok, self.lexer.token));
 		}
 	}
 
 	fn is_term(&self) -> bool {
-		self.curr == Token::End || self.curr == Token::Deindent
+		self.is(Token::End) || self.is(Token::Deindent)
 	}
 
 	pub fn parse(&mut self) {
 		self.entries(Parser::global);
 
 
-		while self.curr != Token::End {
-	    	println!("Left! {:?}", self.curr);
+		while !self.is(Token::End) {
+	    	println!("Left! {:?}", self.tok());
 	    	self.step();
 		}
+
+		print!("{}", self.lexer.src.format_msgs());
 	}
 
 	fn entries<F, R>(&mut self, entry: F) -> Vec<R> where F : Fn(&mut Self) -> Option<R> {
@@ -86,11 +119,13 @@ impl<'c> Parser<'c> {
 	}
 
 	fn global(&mut self) -> Option<bool> {
-		match self.curr {
+		match self.tok() {
 			Token::Name(s) => {
-				match get(&self.lexer.interners.name, s).borrow() {
+				match get(&self.lexer.ctx.interners.name, s).borrow() {
 					"data" => {
+						let baseline = self.lexer.indent;
 						self.step();
+						self.scope(baseline, |s| s.entries(Parser::global));
 						Some(true)
 					}
 					_ => None
@@ -101,11 +136,11 @@ impl<'c> Parser<'c> {
 	}
 
 	fn scope<F, R>(&mut self, baseline: Indent, term: F) -> Option<R> where F : FnOnce(&mut Self) -> R {
-		if self.curr == Token::Line {
+		if self.is(Token::Line) {
 			if self.lexer.indent_newline(&baseline) {
 				let r = term(self);
 
-				if self.curr != Token::End {
+				if !self.is(Token::End) {
 					self.expect(Token::Deindent);
 				}
 
@@ -118,7 +153,6 @@ impl<'c> Parser<'c> {
 }
 
 pub fn parse(src: &str) {
-	let i = Interners::new();
-	let src = format!("{}\0", src);
-	Parser::new(&src, &i).parse()
+	let src = Source::new(Rc::new(Context::new()), "input".to_string(), src);
+	Parser::new(&src).parse()
 }

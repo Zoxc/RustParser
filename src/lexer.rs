@@ -1,27 +1,43 @@
+
 use std;
+use misc;
+use misc::{Interners, Source, Context, Name, Op, Num};
 use interner::{Interner, Val};
 
-macro_rules! intern_type {
-    ($n:ident) => {
-
-		#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-		pub struct $n(u32);
-
-		impl Val for $n {
-			fn new(val: u32) -> $n {
-				$n(val)
-			}
-
-			fn usize(&self) -> usize {
-				self.0 as usize
-			}
-		}
-    };
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Span {
+	pub start: u32,
+	pub len: u32
 }
 
-intern_type!(Name);
-intern_type!(Op);
-intern_type!(Num);
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Spanned<T> {
+	pub span: Span,
+	pub val: T,
+}
+
+impl<T> Spanned<T> {
+	pub fn new(span: Span, val: T) -> Spanned<T> {
+		Spanned {
+			span: span,
+			val: val
+		}
+	}
+}
+
+pub enum Msg {
+	IllegalTab,
+	UnknownChars(String),
+}
+
+impl Msg {
+	pub fn msg(&self, src: &Source) -> String {
+		match *self {
+			Msg::IllegalTab => format!("Tab indentation not allowed"),
+			Msg::UnknownChars(ref s) => format!("Unknown charaters '{}'", s),
+		}
+	}
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Indent(usize);
@@ -33,7 +49,7 @@ enum Bracket {
 	Brace,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Token {
 	End,
 	Line,
@@ -56,59 +72,22 @@ impl Block {
 	}
 }
 
-#[derive(PartialEq, Eq)]
-enum TokenAction {
-	None,
-	Line,
-	Deindent
-}
-
-pub struct Interners {
-	pub name: Interner<Name>,
-	pub op: Interner<Op>,
-	pub num: Interner<Num>,
-}
-
-impl Interners {
-	pub fn new() -> Interners {
-		Interners {
-			name: Interner::new(),
-			op: Interner::new(),
-			num: Interner::new(),
-		}
-	}
-}
-
-pub struct Context<'c> {
-	end: &'c u8,
-	jump_table: [fn (&mut Context<'c>) -> Token; 256],
+pub struct Lexer<'c> {
 	pos: &'c u8,
-	start: &'c u8,
-	last_ended: &'c u8,
+	begin: &'c u8,
+	end: &'c u8,
+	jump_table: [fn (&mut Lexer<'c>) -> Spanned<Token>; 256],
+	pub token: Token,
+	pub span: Span,
 	blocks: Vec<Block>,
-	indent: Indent,
+	pub indent: Indent,
 	deindent_level: usize,
-	action: TokenAction,
-	pub interners: &'c Interners,
+	pub src: &'c Source,
+	pub ctx: &'c Context,
 }
 
 fn offset<'c>(start: &'c u8, end: &'c u8) -> usize {
 	end as *const u8 as usize - start as *const u8 as usize
-}
-
-
-fn slice<'c>(start: &'c u8, end: &'c u8) -> &'c [u8] {
-	unsafe {
-		std::slice::from_raw_parts(start as *const u8, offset(start, end))
-	}
-}
-
-fn str<'c>(start: &'c u8, end: &'c u8) -> String {
-	String::from_utf8_lossy(slice(start, end)).into_owned()
-}
-
-fn intern<'c, T: Val + Copy>(interner: &'c Interner<T>, start: &'c u8, end: &'c u8) -> T {
-	interner.intern(std::str::from_utf8(slice(start, end)).unwrap())
 }
 
 fn bracket_type(c: u8) -> Bracket {
@@ -129,26 +108,41 @@ fn is_op(c: u8) -> bool {
 	}
 }
 
-impl<'c> Context<'c> {
-	pub fn new(src: &'c str, interners: &'c Interners) -> Context<'c> {
-		let src = src.as_bytes();
+macro_rules! spanned {
+    ($this:expr, $c:expr) => {{
+		let start = $this.pos;
+		let val = $c;
+		Spanned::new($this.span(start, $this.pos), val)
+    }};
+}
 
-		let mut result = Context {
+macro_rules! span {
+    ($this:expr, $c:expr) => {{
+    	spanned!($this, $c).span
+    }};
+}
+
+impl<'c> Lexer<'c> {
+	pub fn new(source: &'c Source) -> Lexer<'c> {
+		let src = source.src.as_bytes();
+
+		let mut result = Lexer {
+			token: Token::End,
+			span: Span { start: 0, len: 0},
+			begin: &src[0],
 			end: &src[src.len() - 1],
-			jump_table: [Context::unknown; 256],
+			jump_table: [Lexer::unknown; 256],
 			pos: &src[0],
-			start: &src[0],
-			last_ended: &src[0],
 			blocks: vec![],
 			indent: Indent(0),
 			deindent_level: 0,
-			action: TokenAction::None,
-			interners: interners,
+			src: source,
+			ctx: &source.ctx,
 		};
 
 		assert!(*result.end == 0);
 
-		result.jump_table[0] = Context::end;
+		result.jump_table[0] = Lexer::end;
 
 		macro_rules! set {
 		    ($c:expr, $f:expr) => {{
@@ -166,33 +160,54 @@ impl<'c> Context<'c> {
 		
 		for c in 0..128 {
 			if is_op(c) {
-				set!(c as char, Context::op);
+				set!(c as char, Lexer::op);
 			}
 		}
 
-		set!(' ', Context::whitespace);
-		set!(9, Context::whitespace);
+		set!(' ', Lexer::whitespace);
+		set!(9, Lexer::whitespace);
 
-		set!(10, Context::newline);
-		set!(13, Context::carrage_return);
+		set!(10, Lexer::newline);
+		set!(13, Lexer::carrage_return);
 
-		set!('{', Context::push);
-		set!('[', Context::push);
-		set!('(', Context::push);
+		set!('{', Lexer::push);
+		set!('[', Lexer::push);
+		set!('(', Lexer::push);
 
-		set!('}', Context::pop);
-		set!(']', Context::pop);
-		set!(')', Context::pop);
+		set!('}', Lexer::pop);
+		set!(']', Lexer::pop);
+		set!(')', Lexer::pop);
 
-		set!('_', Context::ident);
-		set_range!('A', 'Z', Context::ident);
-		set_range!('a', 'z', Context::ident);
+		set!('_', Lexer::ident);
+		set_range!('A', 'Z', Lexer::ident);
+		set_range!('a', 'z', Lexer::ident);
 
-		set_range!('0', '9', Context::num);
+		set_range!('0', '9', Lexer::num);
 
 		result.indent = result.get_line_indent();
 
 		result
+	}
+
+	fn msg(&self, span: Span, msg: Msg) {
+		self.src.msg(span, misc::Msg::Lexer(msg));
+	}
+
+	fn to_slice(&self, span: Span) -> &'c [u8] {
+		unsafe {
+			std::slice::from_raw_parts((self.begin as *const u8 as usize + span.start as usize) as *const u8, span.len as usize)
+		}
+	}
+
+	fn intern<T: Val + Copy>(&self, interner: &'c Interner<T>, span: Span) -> T {
+		interner.intern(std::str::from_utf8(self.to_slice(span)).unwrap())
+	}
+
+	fn span(&self, start: &'c u8, end: &'c u8) -> Span {
+		Span {
+			start: (start as *const u8 as usize - self.begin as *const u8 as usize) as u32,
+			len: offset(start, end) as u32,
+		}
 	}
 
 	fn succ(&self) -> &'c u8 {
@@ -215,14 +230,14 @@ impl<'c> Context<'c> {
 	}
 
 	pub fn indent_newline(&mut self, baseline: &Indent) -> bool {
-		assert!(self.action == TokenAction::Line);
+		assert!(self.token == Token::Line);
 
 		let indent = self.get_line_indent();
 
 		if indent.0 > baseline.0 {
 			self.blocks.push(Block { levels: [0; 3], indent: *baseline });
 			self.indent = indent;
-			self.next();
+			self.step();
 
 			true
 		} else {
@@ -238,7 +253,7 @@ impl<'c> Context<'c> {
 						break;
 					}
 					else {
-						panic!("err");
+						self.msg(self.span(self.pos, self.succ()), Msg::UnknownChars("\\x00".to_string()));
 						self.step();
 					}
 				}
@@ -266,7 +281,7 @@ impl<'c> Context<'c> {
 		}
 
 		if self.is(9) {
-			panic!("tab indentation not allowed");
+			self.msg(self.span(self.pos, self.succ()), Msg::IllegalTab);
 		}
 		self.skip_whitespace();
 
@@ -290,7 +305,7 @@ impl<'c> Context<'c> {
 		}
 	}
 
-	fn handle_line(&mut self) -> Token {
+	fn handle_line(&mut self) -> Spanned<Token> {
 		let mut indent = Indent(0);
 
 		let ret = match self.blocks[..].last() {
@@ -325,53 +340,71 @@ impl<'c> Context<'c> {
 				self.blocks.pop();
 			}
 
-			self.start = self.pos;
-			self.action = TokenAction::Deindent;
 			self.deindent_level = i * 2;
-			Token::Deindent
+			spanned!(self, Token::Deindent)
 		} else {
 			self.next()
 		}
  	}
 
-	fn num(&mut self) -> Token {
-		self.step();
+	fn num(&mut self) -> Spanned<Token> {
+		let s = span!(self, {
+			self.step();
 
-		loop {
-			match self.c() as char {
-				'_' | '0'...'9' | 'A'...'F' | 'a'...'f' => { self.step() },
-				_ => break
+			loop {
+				match self.c() as char {
+					'_' | '0'...'9' | 'A'...'F' | 'a'...'f' => { self.step() },
+					_ => break
+				}
 			}
-		}
+		});
 
-		Token::Num(intern(&self.interners.num, self.start, self.pos))
+		Spanned::new(s, Token::Num(self.intern(&self.ctx.interners.num, s)))
 	}
 
-	fn ident(&mut self) -> Token {
-		self.step();
+	fn ident(&mut self) -> Spanned<Token> {
+		let s = span!(self, {
+			self.step();
 
-		loop {
-			match self.c() as char {
-				'_' | '0'...'9' | 'A'...'Z' | 'a'...'z' => { self.step() },
-				_ => break
+			loop {
+				match self.c() as char {
+					'_' | '0'...'9' | 'A'...'Z' | 'a'...'z' => { self.step() },
+					_ => break
+				}
 			}
-		}
+		});
 
-		Token::Name(intern(&self.interners.name, self.start, self.pos))
+		Spanned::new(s, Token::Name(self.intern(&self.ctx.interners.name, s)))
+	}
+
+	fn op(&mut self) -> Spanned<Token> {
+		let s = span!(self, {
+			loop {
+				self.step();
+
+				if !is_op(self.c()) {
+					break
+				}
+			}
+		});
+
+		Spanned::new(s, Token::Op(self.intern(&self.ctx.interners.op, s)))
 	}
 
 	fn at_end(&self) -> bool {
 		self.pos == self.end
 	}
 
-	fn push(&mut self) -> Token {
-		let result = bracket_type(self.c());
+	fn push(&mut self) -> Spanned<Token> {
+		spanned!(self, {
+			let result = bracket_type(self.c());
 
-		self.step();
+			self.step();
 
-		&mut self.blocks[..].last_mut().map(|b| b.levels[result as usize] += 1);
+			&mut self.blocks[..].last_mut().map(|b| b.levels[result as usize] += 1);
 
-		Token::Bracket(result, true)
+			Token::Bracket(result, true)
+		})
 	}
 
 	fn pop_bracket_level(&mut self, bracket: Bracket) -> usize {
@@ -393,33 +426,24 @@ impl<'c> Context<'c> {
 		}
 	}
 
-	fn pop(&mut self) -> Token {
-		let result = bracket_type(self.c());
+	fn pop(&mut self) -> Spanned<Token> {
+		fn pop_impl<'c>(this: &mut Lexer<'c>) -> Token {
+			let result = bracket_type(this.c());
 
-		if !self.blocks.is_empty() {
-			let p = self.pop_bracket_level(result);
-			if p > 0 {
-				self.deindent_level = p * 2 - 1;
-				self.action = TokenAction::Deindent;
-				return Token::Deindent;
+			if !this.blocks.is_empty() {
+				let p = this.pop_bracket_level(result);
+				if p > 0 {
+					this.deindent_level = p * 2 - 1;
+					return Token::Deindent;
+				}
 			}
-		}
- 
-		self.step();
+	 
+			this.step();
 
-		Token::Bracket(result, false)
-	}
-
-	fn op(&mut self) -> Token {
-		loop {
-			self.step();
-
-			if !is_op(self.c()) {
-				break
-			}
+			Token::Bracket(result, false)
 		}
 
-		Token::Op(intern(&self.interners.op, self.start, self.pos))
+		spanned!(self, pop_impl(self))
 	}
 
 	fn skip_whitespace(&mut self) {
@@ -431,20 +455,19 @@ impl<'c> Context<'c> {
 		}
 	}
 
-	fn whitespace(&mut self) -> Token {
+	fn whitespace(&mut self) -> Spanned<Token> {
 		self.step();
 		self.skip_whitespace();
 		self.next()
 	}
 
-	fn newline(&mut self) -> Token {
+	fn newline(&mut self) -> Spanned<Token> {
 		self.step();
 		self.deindent_level = 0;
-		self.action = TokenAction::Line;
-		Token::Line
+		spanned!(self, Token::Line)
 	}
 
-	fn carrage_return(&mut self) -> Token {
+	fn carrage_return(&mut self) -> Spanned<Token> {
 		self.step();
 
 		if self.is(10) {
@@ -452,43 +475,40 @@ impl<'c> Context<'c> {
 		}
 
 		self.deindent_level = 0;
-		self.action = TokenAction::Line;
-		Token::Line
+		spanned!(self, Token::Line)
 	}
 
-	fn end(&mut self) -> Token {
+	fn end(&mut self) -> Spanned<Token> {
 		if self.at_end() {
-			Token::End
+			spanned!(self, Token::End)
 		} else {
 			self.unknown()
 		}
 	}
 
-	fn unknown(&mut self) -> Token {
-		loop {
-			self.step();
+	fn unknown(&mut self) -> Spanned<Token> {
+		let span = span!(self, {
+			loop {
+				self.step();
 
-			if self.jump_table[self.c() as usize] as  *const u8 != Context::unknown as *const u8 {
-				break
+				if self.jump_table[self.c() as usize] as  *const u8 != Lexer::unknown as *const u8 {
+					break
+				}
 			}
-		}
+		});
 
-    	println!("Unknown tokens {}", str(self.start, self.pos));
+		self.msg(span, Msg::UnknownChars(std::str::from_utf8(self.to_slice(span)).unwrap().to_string()));
 
 		self.next()
 	}
 
-	fn next(&mut self) -> Token {
-		self.action = TokenAction::None;
-		self.last_ended = self.pos;
-		self.start = self.pos;
+	fn next(&mut self) -> Spanned<Token> {
 		self.jump_table[self.c() as usize](self)
 	}
 
-	pub fn next_token(&mut self) -> Token {
-		match self.action {
-			TokenAction::None => self.next(),
-			TokenAction::Line => {
+	pub fn next_token(&mut self) {
+		let r = match self.token {
+			Token::Line => {
 				match self.deindent_level {
 					0 => {
 						self.indent = self.get_line_indent();
@@ -497,21 +517,50 @@ impl<'c> Context<'c> {
 					1 => self.next(),
 					_ => {
 						self.deindent_level -= 1;
-						self.action = TokenAction::Deindent;
-						Token::Deindent
+						Spanned::new(self.span, Token::Deindent)
 					}
 				}
 
 			}
-			TokenAction::Deindent => {
+			Token::Deindent => {
 				if self.deindent_level == 1 {
 					self.next()
 				} else {
 					self.deindent_level -= 1;
-					self.action = TokenAction::Line;
-					Token::Line
+					Spanned::new(self.span, Token::Line)
 				}
 			}
+			_ => self.next(),
+		};
+		self.token = r.val;
+		self.span = r.span;
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use std;
+	use quickcheck;
+	use super::*;
+
+	#[test]
+	fn test() {
+		fn parser_test(mut xs: String) -> bool {
+			use misc::{Context, Source};
+			use std::rc::Rc;
+
+			let src = Source::new(Rc::new(Context::new()), "input".to_string(), &xs);
+			let mut lexer = Lexer::new(&src);
+
+			loop {
+				lexer.next_token();
+
+				if lexer.token == Token::End {
+					break
+				}
+			}
+			true
 		}
+		quickcheck::quickcheck(parser_test as fn (String) -> bool);
 	}
 }

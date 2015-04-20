@@ -1,9 +1,7 @@
-#![feature(plugin)]
+#[cfg(test)]
+extern crate quickcheck;
 
-#![plugin(afl_coverage_plugin)]
-
-extern crate afl_coverage;
-
+mod misc;
 mod interner;
 mod lexer;
 mod parser;
