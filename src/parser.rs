@@ -1,6 +1,6 @@
 use lexer;
 use std::rc::Rc;
-use lexer::{Token, Indent, Span};
+use lexer::{Token, Indent, Span, Bracket};
 use misc;
 use misc::interned::*;
 use misc::{Context, Source, Name};
@@ -60,10 +60,14 @@ impl<'c> Parser<'c> {
 		self.lexer.token == tok
 	}
 
+	fn print(&self, s: &str) {
+    	println!("{}\n{}", s, self.lexer.src.format_span(self.lexer.span));
+	}
+
 	fn step(&mut self) {
 		self.last_ended = self.lexer.span.start + self.lexer.span.len;
 		self.lexer.next_token();
-    	println!("Tok {:?}", self.lexer.token);
+    	self.print(&format!("Tok {:?}", self.lexer.token));
 	}
 
 	fn expect(&mut self, tok: Token) {
@@ -79,6 +83,8 @@ impl<'c> Parser<'c> {
 	}
 
 	pub fn parse(&mut self) {
+    	self.print(&format!("Tok {:?}", self.lexer.token));
+
 		self.entries(Parser::global);
 
 
@@ -108,13 +114,48 @@ impl<'c> Parser<'c> {
 		list
 	}
 
+	fn _if(&mut self) -> bool {
+		let baseline = self.lexer.indent;
+		self.step();
+		self.scope(baseline, |s| s.entries(Parser::global));
+
+		if self.is(Token::Name(KW_ELSE)) {
+			let else_baseline = self.lexer.indent;
+			self.step();
+
+			if self.is(Token::Name(KW_IF)) {
+				self._if();
+			} else {
+				self.scope(else_baseline, |s| s.entries(Parser::global));
+			}
+
+		}
+
+		true
+	}
+
 	fn global(&mut self) -> Option<bool> {
 		match self.tok() {
+			Token::Name(KW_IF) => Some(self._if()),
 			Token::Name(KW_DATA) => {
 				let baseline = self.lexer.indent;
 				self.step();
 				self.scope(baseline, |s| s.entries(Parser::global));
 				Some(true)
+			}
+			Token::Name(KW_RETURN) => {
+				self.step();
+				self.global()
+			}
+			Token::Name(_) => {
+				self.step();
+				Some(true)
+			}
+			Token::Bracket(Bracket::Parent, true) => {
+				self.step();
+				let r = self.global();
+				self.expect(Token::Bracket(Bracket::Parent, false));
+				r
 			}
 			_ => None
 		}
@@ -123,11 +164,14 @@ impl<'c> Parser<'c> {
 	fn scope<F, R>(&mut self, baseline: Indent, term: F) -> Option<R> where F : FnOnce(&mut Self) -> R {
 		if self.is(Token::Line) {
 			if self.lexer.indent_newline(&baseline) {
+    			self.print("New scope");
 				let r = term(self);
 
 				if !self.is(Token::End) {
 					self.expect(Token::Deindent);
 				}
+				
+    			self.print("Done scope");
 
 				return Some(r);
 			}

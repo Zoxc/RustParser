@@ -43,7 +43,7 @@ impl Msg {
 pub struct Indent(usize);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Bracket {
+pub enum Bracket {
 	Parent,
 	Square,
 	Brace,
@@ -103,7 +103,7 @@ fn is_op(c: u8) -> bool {
 	match c as char {
 		'+' | '-' | '&' | '*' | '%' | '=' |
 		'<' | '>' | '|' | '^' | '~' | ':' |
-		'!' | '/'  | ',' => true,
+		'!' | '/' | ',' | '.' => true,
 		_ => false
 	}
 }
@@ -239,7 +239,7 @@ impl<'c> Lexer<'c> {
 		if indent.0 > baseline.0 {
 			self.blocks.push(Block { levels: [0; 3], indent: *baseline });
 			self.indent = indent;
-			self.step();
+			self.next_token();
 
 			true
 		} else {

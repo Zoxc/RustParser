@@ -191,7 +191,7 @@ impl Source {
 		c
 	}
 
-	fn format_span(&self, s: Span) -> String {
+	pub fn format_span(&self, s: Span) -> String {
 		let (line_nr, start) = self.line_info(s);
 		let end = self.line_end(start);
 		let line = std::str::from_utf8(&self.src.as_bytes()[start..end]).unwrap();
