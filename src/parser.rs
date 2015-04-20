@@ -1,10 +1,9 @@
 use lexer;
-use interner::{Val, Interner, RcStr};
-use std::borrow::Borrow;
 use std::rc::Rc;
 use lexer::{Token, Indent, Span};
 use misc;
-use misc::{Interners, Context, Source, Name, Op};
+use misc::interned::*;
+use misc::{Context, Source, Name};
 
 pub fn token_parser(src: &str) {
 	let src = Source::new(Rc::new(Context::new()), "input".to_string(), src);
@@ -41,19 +40,10 @@ struct Parser<'c> {
 	last_ended: u32,
 }
 
-fn get<T: Val + Copy>(interner: &Interner<T>, val: T) -> RcStr {
-	interner.get(val)
-}
-
 impl<'c> Parser<'c> {
 	pub fn new(src: &'c Source) -> Parser<'c> {
-		let mut lexer = lexer::Lexer::new(src);
-		let curr = lexer.next_token();
-
-    	//println!("Tok {:?}", curr);
-
 		Parser {
-			lexer: lexer,
+			lexer: lexer::Lexer::new(src),
 			last_ended: 0,
 		}
 	}
@@ -120,16 +110,11 @@ impl<'c> Parser<'c> {
 
 	fn global(&mut self) -> Option<bool> {
 		match self.tok() {
-			Token::Name(s) => {
-				match get(&self.lexer.ctx.interners.name, s).borrow() {
-					"data" => {
-						let baseline = self.lexer.indent;
-						self.step();
-						self.scope(baseline, |s| s.entries(Parser::global));
-						Some(true)
-					}
-					_ => None
-				}
+			Token::Name(KW_DATA) => {
+				let baseline = self.lexer.indent;
+				self.step();
+				self.scope(baseline, |s| s.entries(Parser::global));
+				Some(true)
 			}
 			_ => None
 		}
@@ -155,4 +140,20 @@ impl<'c> Parser<'c> {
 pub fn parse(src: &str) {
 	let src = Source::new(Rc::new(Context::new()), "input".to_string(), src);
 	Parser::new(&src).parse()
+}
+
+#[cfg(test)]
+mod test {
+	use std;
+	use quickcheck;
+	use super::*;
+
+	#[test]
+	fn test() {
+		fn parser_test(mut xs: String) -> bool {
+			parse(&xs);
+			true
+		}
+		quickcheck::quickcheck(parser_test as fn (String) -> bool);
+	}
 }

@@ -1,3 +1,4 @@
+use std;
 use std::rc::Rc;
 use std::cell::RefCell;
 use parser;
@@ -9,7 +10,7 @@ macro_rules! intern_type {
     ($n:ident) => {
 
 		#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-		pub struct $n(u32);
+		pub struct $n(pub u32);
 
 		impl Val for $n {
 			fn new(val: u32) -> $n {
@@ -33,16 +34,6 @@ pub struct Interners {
 	pub num: Interner<Num>,
 }
 
-impl Interners {
-	pub fn new() -> Interners {
-		Interners {
-			name: Interner::new(),
-			op: Interner::new(),
-			num: Interner::new(),
-		}
-	}
-}
-
 pub enum Msg {
 	Lexer(lexer::Msg),
 	Parser(parser::Msg),
@@ -62,6 +53,60 @@ pub struct Message {
 	msg: Msg,
 }
 
+macro_rules! count_exprs {
+    ($head:ident+) => (1);
+    ($head:ident+ $($tail:ident+)*) => (1 + count_exprs!($($tail+)*));
+}
+
+macro_rules! interned_consts {
+    ($t:path: $c:expr; $n:ident+) => {
+    	pub const $n: $t = $t(($c) - 1);
+    };
+    ($t:path: $c:expr; $n:ident+ $($tail:ident+)*) => {
+    	pub const $n: $t = $t(($c) - (count_exprs!($($tail+)*)) - 1);
+    	interned_consts!($t: $c; $($tail+)*);
+    };
+}
+
+macro_rules! interned {
+    ($t:path: $i:ident: $($n:ident, $x:expr; )* ) => {
+        interned_consts!($t: count_exprs!($($n+)*); $($n+)*);
+
+        fn $i() -> Interner<$t> {
+        	let interner = Interner::new();
+        	$(
+        		let n = interner.intern($x);
+        		debug_assert!($n == n);
+        	)*
+        	interner
+        }
+    };
+}
+
+pub mod interned {
+	use super::*;
+	use interner::Interner;
+
+	interned!(Name: make_name_interner:
+		KW_DATA, "data";
+		KW_IF, "if";
+		KW_FN, "fn";
+		KW_RETURN, "return";
+		KW_ELSE, "else";
+		KW_USE, "use";
+		KW_BREAK, "break";
+		KW_CONTINUE, "continue";
+	);
+
+	pub fn new_interners() -> Interners {
+		Interners {
+			name: interned::make_name_interner(),
+			op: Interner::new(),
+			num: Interner::new(),
+		}
+	}
+}
+
 pub struct Context {
 	pub interners: Interners,
 }
@@ -69,7 +114,7 @@ pub struct Context {
 impl Context {
 	pub fn new() -> Context {
 		Context {
-			interners: Interners::new(),
+			interners: interned::new_interners(),
 		}
 	}
 }
@@ -84,8 +129,8 @@ pub struct Source {
 impl Source {
 	pub fn new(ctx: Rc<Context>, filename: String, src: &str) -> Source {
 		Source {
-			ctx: Rc::new(Context::new()),
-			filename: "input".to_string(),
+			ctx: ctx,
+			filename: filename,
 			src: format!("{}\0", src),
 			msgs: RefCell::new(Vec::new()),
 		}
@@ -98,8 +143,70 @@ impl Source {
 		});
 	}
 
+	fn line_info(&self, s: Span) -> (usize, usize) {
+		let src = self.src.as_bytes();
+
+		let pos = s.start as usize;
+		let mut c = 0;
+		let mut ls = 0;
+
+		let mut line = 1;
+
+		loop {
+			if c == pos {
+				break;
+			}
+			if src[c] == 10 {
+				line += 1;
+				ls = c + 1;
+			} else if src[c] == 13 {
+				line += 1;
+				if src[c + 1] == 10 {
+					c += 1;
+				}
+				ls = c + 1;
+			}
+			c += 1
+		}
+
+		(line, ls)
+	}
+
+	fn line_end(&self, mut c: usize) -> usize {
+		let src = self.src.as_bytes();
+
+		loop {
+			if src.len() - 1 == c {
+				break;
+			}
+
+			match src[c] {
+				10 | 13 => break,
+				_ => ()
+			}
+
+			c += 1
+		}
+
+		c
+	}
+
+	fn format_span(&self, s: Span) -> String {
+		let (line_nr, start) = self.line_info(s);
+		let end = self.line_end(start);
+		let line = std::str::from_utf8(&self.src.as_bytes()[start..end]).unwrap();
+		let pos = format!("{}:{}: ", self.filename, line_nr);
+		let space = std::iter::repeat(" ").take(s.start as usize - start as usize + pos.len()).collect::<String>();
+		let cursor = if s.len > 1 {
+			std::iter::repeat("~").take(s.len as usize).collect::<String>()
+		} else {
+			"^".to_string()
+		};
+		format!("{}{}\n{}{}\n", pos, line, space, cursor)
+	}
+
 	pub fn format_msgs(&self) -> String {
-		let m: Vec<String> = self.msgs.borrow().iter().map(|m| format!("{}: {}\n", self.filename, m.msg.msg(self)) ).collect();
+		let m: Vec<String> = self.msgs.borrow().iter().rev().map(|m| format!("error: {}\n{}", m.msg.msg(self), self.format_span(m.span))).collect();
 		m.concat()
 	}
 }

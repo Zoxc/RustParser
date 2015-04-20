@@ -1,7 +1,7 @@
 
 use std;
 use misc;
-use misc::{Interners, Source, Context, Name, Op, Num};
+use misc::{Source, Context, Name, Op, Num};
 use interner::{Interner, Val};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -34,7 +34,7 @@ impl Msg {
 	pub fn msg(&self, src: &Source) -> String {
 		match *self {
 			Msg::IllegalTab => format!("Tab indentation not allowed"),
-			Msg::UnknownChars(ref s) => format!("Unknown charaters '{}'", s),
+			Msg::UnknownChars(ref s) => format!("Unknown charater(s) '{}'", s),
 		}
 	}
 }
@@ -186,6 +186,8 @@ impl<'c> Lexer<'c> {
 
 		result.indent = result.get_line_indent();
 
+		result.next_token();
+
 		result
 	}
 
@@ -211,7 +213,7 @@ impl<'c> Lexer<'c> {
 	}
 
 	fn succ(&self) -> &'c u8 {
-		assert!(self.pos != self.end);
+		debug_assert!(self.pos != self.end);
 		unsafe {
 			std::mem::transmute((self.pos as *const u8).offset(1))
 		}
@@ -230,7 +232,7 @@ impl<'c> Lexer<'c> {
 	}
 
 	pub fn indent_newline(&mut self, baseline: &Indent) -> bool {
-		assert!(self.token == Token::Line);
+		debug_assert!(self.token == Token::Line);
 
 		let indent = self.get_line_indent();
 
@@ -545,7 +547,7 @@ mod test {
 
 	#[test]
 	fn test() {
-		fn parser_test(mut xs: String) -> bool {
+		fn parser_test(xs: String) -> bool {
 			use misc::{Context, Source};
 			use std::rc::Rc;
 
