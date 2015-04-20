@@ -168,13 +168,17 @@ impl<'c> Parser<'c> {
 		if self.is(Token::Line) {
 			if self.lexer.indent_newline(baseline, pos) {
     			self.print("New scope");
+    			
+    			self.print(&format!("Tok {:?}", self.lexer.token));
+
 				let r = term(self);
+
+    			self.print("Done scope");
 
 				if !self.is(Token::End) {
 					self.expect(Token::Deindent);
 				}
 
-    			self.print("Done scope");
 
 				return Some(r);
 			}

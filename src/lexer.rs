@@ -401,7 +401,7 @@ impl<'c> Lexer<'c> {
 		if b.ignore() {
 			false
 		} else {
-			self.blocks.len() > 2 && self.indent.0 <= b.indent.0 
+			self.blocks.len() > 1 && self.indent.0 <= b.indent.0 
 		}
 	}
 
@@ -473,6 +473,8 @@ impl<'c> Lexer<'c> {
 		self.pos = pos;
 		self.indent = indent;
 		self.line_start = line_start;
+
+		println!("indent is {:?}", indent);
 
 		let mut i = 0;
 
