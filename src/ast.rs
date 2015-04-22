@@ -1,9 +1,5 @@
-use lexer;
-use std::rc::Rc;
-use lexer::{Token, Indent, Span, Spanned, Bracket};
-use misc;
-use misc::interned::*;
-use misc::{Context, Source, Name};
+use lexer::{Span, Spanned};
+use misc::{Name};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Ident(pub Spanned<Name>);

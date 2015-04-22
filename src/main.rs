@@ -2,6 +2,7 @@
 extern crate quickcheck;
 
 mod ast;
+mod print;
 mod misc;
 mod interner;
 mod lexer;

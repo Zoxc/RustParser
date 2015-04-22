@@ -3,26 +3,10 @@ use std;
 use std::rc::Rc;
 use lexer::{Token, Indent, Span, Spanned, Bracket};
 use ast::*;
+use print;
 use misc;
 use misc::interned::*;
 use misc::{Context, Source, Name};
-
-pub fn token_parser(src: &str) {
-	let src = Source::new(Rc::new(Context::new()), "input".to_string(), src);
-
-	let mut ctx = lexer::Lexer::new(&src);
-
-	loop {
-		ctx.next_token();
-
-		if ctx.token == Token::End {
-			break
-		}
-
-
-    	println!("{:?}", ctx.token);
-	}
-}
 
 pub enum Msg {
 	Expected(String, Token),
@@ -37,7 +21,6 @@ impl Msg {
 		}
 	}
 }
-
 
 macro_rules! spanned {
     ($this:expr, $c:expr) => {{
@@ -172,7 +155,7 @@ impl<'c> Parser<'c> {
 
 		let ast = self.items();
 
-		println!("AST! {:?}", ast);
+		println!("AST! {}", print::item_block(self.lexer.src, &Some(Spanned::new(lexer::SPAN_ERROR, ast))));
 
 		while !self.is(Token::End) {
 			println!("Left! {:?}", self.tok());
