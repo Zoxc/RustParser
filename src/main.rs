@@ -1,6 +1,7 @@
 #[cfg(test)]
 extern crate quickcheck;
 
+mod ast;
 mod misc;
 mod interner;
 mod lexer;

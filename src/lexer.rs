@@ -10,6 +10,11 @@ pub struct Span {
 	pub len: u32
 }
 
+pub const SPAN_ERROR: Span = Span {
+	start: -1i32 as u32,
+	len: 0
+};
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Spanned<T> {
 	pub span: Span,
@@ -22,6 +27,13 @@ impl<T> Spanned<T> {
 			span: span,
 			val: val
 		}
+	}
+}
+
+impl<T> Spanned<Option<T>> {
+	pub fn wrap_in(self) -> Option<Spanned<T>> {
+		let span = self.span;
+		self.val.map(|v| Spanned::new(span, v))
 	}
 }
 
@@ -366,7 +378,6 @@ impl<'c> Lexer<'c> {
 		spanned!(self, {
 			let result = bracket_type(self.c());
 			let p = self.pop_bracket_level(result);
-				println!("POP {} {} {}", p, self.blocks.len(), self.blocks[0].levels[0]);
 			if p > 0 {
 				self.deindent_level = p;
 				self.deindent_bracket = true;
@@ -473,8 +484,6 @@ impl<'c> Lexer<'c> {
 		self.pos = pos;
 		self.indent = indent;
 		self.line_start = line_start;
-
-		println!("indent is {:?}", indent);
 
 		let mut i = 0;
 

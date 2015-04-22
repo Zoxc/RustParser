@@ -88,6 +88,7 @@ pub mod interned {
 	use interner::Interner;
 
 	interned!(Name: make_name_interner:
+		NAME_ERROR, "<error>";
 		KW_DATA, "data";
 		KW_IF, "if";
 		KW_FN, "fn";

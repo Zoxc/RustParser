@@ -1,6 +1,7 @@
 use lexer;
 use std::rc::Rc;
-use lexer::{Token, Indent, Span, Bracket};
+use lexer::{Token, Indent, Span, Spanned, Bracket};
+use ast::*;
 use misc;
 use misc::interned::*;
 use misc::{Context, Source, Name};
@@ -23,17 +24,35 @@ pub fn token_parser(src: &str) {
 }
 
 pub enum Msg {
-	ExpectedToken(Token, Token)
+	Expected(String, Token),
+	ExpectedToken(Token, Token),
 }
 
 impl Msg {
 	pub fn msg(&self, src: &Source) -> String {
 		match *self {
+			Msg::Expected(ref expected, found) => format!("Expected {}, but found {:?}", expected, found),
 			Msg::ExpectedToken(expected, found) => format!("Expected {:?}, but found {:?}", expected, found),
 		}
 	}
 }
 
+
+macro_rules! spanned {
+    ($this:expr, $c:expr) => {{
+		let start = $this.lexer.span;
+		let val = $c;
+		Spanned::new($this.span(start), val)
+    }};
+}
+
+macro_rules! span_wrap {
+    ($this:expr, $c:expr) => {{
+		let start = $this.lexer.span;
+		let val = $c;
+		$c.map(|v| Spanned::new($this.span(start), v))
+    }};
+}
 
 struct Parser<'c> {
 	lexer: lexer::Lexer<'c>,
@@ -78,6 +97,25 @@ impl<'c> Parser<'c> {
 		}
 	}
 
+	fn expected(&mut self, str: &str) {
+		self.msg(self.lexer.span, Msg::Expected(str.to_string(), self.lexer.token));
+	}
+
+	fn ident(&mut self) -> Ident {
+		Ident(spanned!(self, {
+			match self.tok() {
+				Token::Name(name) => {
+					self.step();
+					name
+				}
+				_ => {
+					self.expected("identifier");
+					NAME_ERROR
+				}
+			}
+		}))
+	}
+
 	fn is_term(&self) -> bool {
 		self.is(Token::End) || self.is(Token::Deindent)
 	}
@@ -85,7 +123,7 @@ impl<'c> Parser<'c> {
 	pub fn parse(&mut self) {
     	self.print(&format!("Tok {:?}", self.lexer.token));
 
-		self.entries(Parser::global);
+		self.entries(Parser::try_item);
 
 
 		while !self.is(Token::End) {
@@ -114,78 +152,110 @@ impl<'c> Parser<'c> {
 		list
 	}
 
-	fn _if(&mut self) -> bool {
+	fn block<F, R>(&mut self, baseline: Indent, pos: Option<Indent>, term: F) -> Option<Spanned<R>> where F : FnOnce(&mut Self) -> R {
+		if self.is(Token::Line) {
+			if self.lexer.indent_newline(baseline, pos) {
+				Some(spanned!(self, {
+	    			self.print("New block");
+	    			
+	    			self.print(&format!("Tok {:?}", self.lexer.token));
+
+					let r = term(self);
+
+	    			self.print("Done block");
+
+					if !self.is(Token::End) {
+						self.expect(Token::Deindent);
+					}
+
+					r
+				}))
+			} else {
+				None
+			}
+		} else {
+			None
+		}
+	}
+
+	fn span(&self, start: Span) -> Span {
+		Span {
+			start: start.start,
+			len: self.last_ended - start.start
+		}
+	}
+
+	fn items(&mut self) -> Vec<Item_> {
+		self.entries(Parser::try_item)
+	}
+	
+	fn try_item(&mut self) -> Option<Item_> {
+		span_wrap!(self, {
+			match self.tok() {
+				Token::Name(KW_DATA) => {
+					let baseline = self.lexer.indent;
+					self.step();
+					let ident = self.ident();
+					let block = self.block(baseline, None, |s| s.items());
+
+					Some(Item::Data(ident, block))
+				}
+				_ => None
+			}
+		})
+	}
+
+	fn expr(&mut self) -> Expr_ {
+		match self.try_expr() {
+			Some(e) => e,
+			_ => {
+				self.expected("expression");
+				Spanned::new(lexer::SPAN_ERROR, Expr::Error)
+			}
+		}
+	}
+
+	fn try_expr(&mut self) -> Option<Expr_> {
+		span_wrap!(self, {
+			match self.tok() {
+				Token::Name(KW_IF) => Some(self._if()),
+				Token::Name(KW_RETURN) => {
+					self.step();
+					Some(Expr::Return(Box::new(self.expr())))
+				}
+				_ => None
+			}
+		})
+	}
+
+	fn _if(&mut self) -> Expr {
 		let pos = self.lexer.column();
 		let baseline = self.lexer.indent;
 		self.step();
-		self.scope(baseline, Some(pos), |s| s.entries(Parser::global));
+		let cond = self.expr();
+		let block = self.block(baseline, Some(pos), |s| s.entries(Parser::try_expr));
 
-    	self.print(&format!("ELSE Tok {:?}", self.lexer.token));
-		if self.is(Token::Line) && self.lexer.peek_ident() == Some(KW_ELSE) {
-			self.step();
-			debug_assert!(self.is(Token::Name(KW_ELSE)));
-			let else_baseline = self.lexer.indent;
-			self.step();
-
-			if self.is(Token::Name(KW_IF)) {
-				self._if();
-			} else {
-				self.scope(else_baseline, None, |s| s.entries(Parser::global));
-			}
-		}
-
-		true
-	}
-
-	fn global(&mut self) -> Option<bool> {
-		match self.tok() {
-			Token::Name(KW_IF) => Some(self._if()),
-			Token::Name(KW_DATA) => {
-				let baseline = self.lexer.indent;
+		let else_block = if self.is(Token::Line) && self.lexer.peek_ident() == Some(KW_ELSE) {
+			span_wrap!(self, {
 				self.step();
-				self.scope(baseline, None, |s| s.entries(Parser::global));
-				Some(true)
-			}
-			Token::Name(KW_RETURN) => {
+				debug_assert!(self.is(Token::Name(KW_ELSE)));
+				let else_baseline = self.lexer.indent;
 				self.step();
-				self.global()
-			}
-			Token::Name(_) => {
-				self.step();
-				Some(true)
-			}
-			Token::Bracket(Bracket::Parent, true) => {
-				self.step();
-				let r = self.global();
-				self.expect(Token::Bracket(Bracket::Parent, false));
-				r
-			}
-			_ => None
-		}
-	}
 
-	fn scope<F, R>(&mut self, baseline: Indent, pos: Option<Indent>, term: F) -> Option<R> where F : FnOnce(&mut Self) -> R {
-		if self.is(Token::Line) {
-			if self.lexer.indent_newline(baseline, pos) {
-    			self.print("New scope");
-    			
-    			self.print(&format!("Tok {:?}", self.lexer.token));
-
-				let r = term(self);
-
-    			self.print("Done scope");
-
-				if !self.is(Token::End) {
-					self.expect(Token::Deindent);
+				if self.is(Token::Name(KW_IF)) {
+					Some(self._if())
+				} else {
+					self.block(else_baseline, None, |s| s.entries(Parser::try_expr)).map(|b| Expr::Block(Some(b)))
 				}
+			}).map(|v| Box::new(v))
+		} else {
+			None
+		};
 
-
-				return Some(r);
-			}
-		}
-
-		None
+		Expr::If(Box::new(cond), block, else_block)
 	}
+
+
 }
 
 pub fn parse(src: &str) {
