@@ -99,10 +99,14 @@ pub mod interned {
 		KW_CONTINUE, "continue";
 	);
 
+	interned!(Op: make_op_interner:
+		OP_COMMA, ",";
+	);
+
 	pub fn new_interners() -> Interners {
 		Interners {
 			name: interned::make_name_interner(),
-			op: Interner::new(),
+			op: interned::make_op_interner(),
 			num: Interner::new(),
 		}
 	}

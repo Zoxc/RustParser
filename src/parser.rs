@@ -1,4 +1,5 @@
 use lexer;
+use std;
 use std::rc::Rc;
 use lexer::{Token, Indent, Span, Spanned, Bracket};
 use ast::*;
@@ -49,7 +50,6 @@ macro_rules! spanned {
 macro_rules! span_wrap {
     ($this:expr, $c:expr) => {{
 		let start = $this.lexer.span;
-		let val = $c;
 		$c.map(|v| Spanned::new($this.span(start), v))
     }};
 }
@@ -80,13 +80,60 @@ impl<'c> Parser<'c> {
 	}
 
 	fn print(&self, s: &str) {
-    	println!("{}\n{}", s, self.lexer.src.format_span(self.lexer.span));
+		println!("{}\n{}", s, self.lexer.src.format_span(self.lexer.span));
+	}
+
+	fn bracket<F, R>(&mut self, bracket: Bracket, f: F) -> Option<R> where F : FnOnce(&mut Self) -> R {
+		self.expect(Token::Bracket(bracket, true));
+		let r = if self.is(Token::Bracket(bracket, false)) {
+			None
+		} else {
+			Some(f(self))
+		};
+		self.expect(Token::Bracket(bracket, false));
+		r
+	}
+
+	fn seq<F, R>(&mut self, close: Token, mut f: F) -> Vec<R> where F : FnMut(&mut Self) -> Option<R> {
+		let mut r = Vec::new();
+
+		loop {
+			match f(self) {
+				Some(v) => r.push(v),
+				None => break,
+			}
+
+			if self.is(Token::Op(OP_COMMA)) {
+				self.step();
+				self.skip(Token::Line);
+
+				if self.is(close) {
+					break
+				}
+			} else {
+				break;
+			}
+		}
+
+		r
+	}
+
+	fn bracket_seq<F, R>(&mut self, bracket: Bracket, f: F) -> Vec<R> where F : FnMut(&mut Self) -> Option<R> {
+		self.bracket(bracket, |parser| {
+			parser.seq(Token::Bracket(bracket, false), f)
+		}).unwrap_or(Vec::new())
 	}
 
 	fn step(&mut self) {
 		self.last_ended = self.lexer.span.start + self.lexer.span.len;
 		self.lexer.next_token();
     	self.print(&format!("Tok {:?}", self.lexer.token));
+	}
+
+	fn skip(&mut self, tok: Token) {
+		if self.is(tok) {
+			self.step()
+		}
 	}
 
 	fn expect(&mut self, tok: Token) {
@@ -121,20 +168,21 @@ impl<'c> Parser<'c> {
 	}
 
 	pub fn parse(&mut self) {
-    	self.print(&format!("Tok {:?}", self.lexer.token));
+		self.print(&format!("Tok {:?}", self.lexer.token));
 
-		self.entries(Parser::try_item);
+		let ast = self.items();
 
+		println!("AST! {:?}", ast);
 
 		while !self.is(Token::End) {
-	    	println!("Left! {:?}", self.tok());
-	    	self.step();
+			println!("Left! {:?}", self.tok());
+			self.step();
 		}
 
 		print!("{}", self.lexer.src.format_msgs());
 	}
 
-	fn entries<F, R>(&mut self, entry: F) -> Vec<R> where F : Fn(&mut Self) -> Option<R> {
+	fn entries<F, R: std::fmt::Debug>(&mut self, entry: F) -> Vec<R> where F : Fn(&mut Self) -> Option<R> {
 		let mut list = Vec::new();
 
 		loop {
@@ -156,13 +204,11 @@ impl<'c> Parser<'c> {
 		if self.is(Token::Line) {
 			if self.lexer.indent_newline(baseline, pos) {
 				Some(spanned!(self, {
-	    			self.print("New block");
-	    			
-	    			self.print(&format!("Tok {:?}", self.lexer.token));
-
+					self.print("New block");
+					
 					let r = term(self);
 
-	    			self.print("Done block");
+					self.print("Done block");
 
 					if !self.is(Token::End) {
 						self.expect(Token::Deindent);
@@ -200,11 +246,24 @@ impl<'c> Parser<'c> {
 
 					Some(Item::Data(ident, block))
 				}
+				Token::Name(KW_FN) => {
+					let baseline = self.lexer.indent;
+					self.step();
+					let ident = self.ident();
+					let params = self.bracket_seq(Bracket::Parent, |parser| Some(parser.ident()));
+					let block = self.block(baseline, None, |s| s.exprs());
+
+					Some(Item::Fn(ident, params, block))
+				}
 				_ => None
 			}
 		})
 	}
 
+	fn exprs(&mut self) -> Vec<Expr_> {
+		self.entries(Parser::try_expr)
+	}
+	
 	fn expr(&mut self) -> Expr_ {
 		match self.try_expr() {
 			Some(e) => e,
