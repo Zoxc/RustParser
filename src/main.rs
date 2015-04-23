@@ -1,5 +1,9 @@
+#![feature(rustc_private)]
+
 #[cfg(test)]
 extern crate quickcheck;
+
+extern crate rustc_llvm;
 
 use std::rc::Rc;
 use std::io::Read;
@@ -13,6 +17,7 @@ mod lexer;
 mod parser;
 mod declare;
 mod resolution;
+mod node_map;
 
 fn main() {
     let path = std::path::Path::new("test.txt");
@@ -26,6 +31,8 @@ fn main() {
 
     declare::run(&mut ast);
     resolution::run(&src, &mut ast);
+
+    let map = node_map::create(&ast);
 
 	print!("{}", src.format_msgs());
 }

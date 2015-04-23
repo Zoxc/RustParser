@@ -23,7 +23,7 @@ impl SymbolTable {
 	}
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Id(pub u32);
 
 pub const NONE: Id = Id(0);
@@ -89,6 +89,11 @@ pub enum Expr {
 	Return(Box<N<Expr>>),
 	Block(Block_<N<Expr>>),
 	Ref(Ident, Id),
+}
+
+pub enum Lookup<'c> {
+	Item(&'c Item_),
+	Expr(&'c Expr_),
 }
 
 pub mod fold {
