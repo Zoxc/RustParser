@@ -30,20 +30,13 @@ impl<T> Spanned<T> {
 	}
 }
 
-impl<T> Spanned<Option<T>> {
-	pub fn wrap_in(self) -> Option<Spanned<T>> {
-		let span = self.span;
-		self.val.map(|v| Spanned::new(span, v))
-	}
-}
-
 pub enum Msg {
 	IllegalTab,
 	UnknownChars(String),
 }
 
 impl Msg {
-	pub fn msg(&self, src: &Source) -> String {
+	pub fn msg(&self, _src: &Source) -> String {
 		match *self {
 			Msg::IllegalTab => format!("Tab indentation not allowed"),
 			Msg::UnknownChars(ref s) => format!("Unknown charater(s) '{}'", s),

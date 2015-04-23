@@ -1,12 +1,10 @@
 use lexer;
-use std;
-use std::rc::Rc;
 use lexer::{Token, Indent, Span, Spanned, Bracket};
 use ast::*;
 use print;
 use misc;
 use misc::interned::*;
-use misc::{Context, Source, Name};
+use misc::{Source, Name};
 
 pub enum Msg {
 	Expected(String, Token),
@@ -14,7 +12,7 @@ pub enum Msg {
 }
 
 impl Msg {
-	pub fn msg(&self, src: &Source) -> String {
+	pub fn msg(&self, _src: &Source) -> String {
 		match *self {
 			Msg::Expected(ref expected, found) => format!("Expected {}, but found {:?}", expected, found),
 			Msg::ExpectedToken(expected, found) => format!("Expected {:?}, but found {:?}", expected, found),
@@ -30,10 +28,18 @@ macro_rules! spanned {
     }};
 }
 
-macro_rules! span_wrap {
+macro_rules! noded {
     ($this:expr, $c:expr) => {{
 		let start = $this.lexer.span;
-		$c.map(|v| Spanned::new($this.span(start), v))
+		let val = $c;
+		N::new($this.lexer.src, $this.span(start), val)
+    }};
+}
+
+macro_rules! node_wrap {
+    ($this:expr, $c:expr) => {{
+		let start = $this.lexer.span;
+		$c.map(|v| N::new($this.lexer.src, $this.span(start), v))
     }};
 }
 
@@ -150,28 +156,28 @@ impl<'c> Parser<'c> {
 		self.is(Token::End) || self.is(Token::Deindent)
 	}
 
-	pub fn parse(&mut self) {
+	pub fn parse(&mut self) -> Block_<Item_> {
 		self.print(&format!("Tok {:?}", self.lexer.token));
 
-		let ast = self.items();
+		let ast = noded!(self, { self.items() });
 
-		println!("AST! {}", print::item_block(self.lexer.src, &Some(Spanned::new(lexer::SPAN_ERROR, ast))));
+		println!("AST! {}", print::item_block(self.lexer.src, &ast));
 
 		while !self.is(Token::End) {
 			println!("Left! {:?}", self.tok());
 			self.step();
 		}
 
-		print!("{}", self.lexer.src.format_msgs());
+		ast
 	}
 
-	fn entries<F, R: std::fmt::Debug>(&mut self, entry: F) -> Vec<R> where F : Fn(&mut Self) -> Option<R> {
-		let mut list = Vec::new();
+	fn entries<F, R>(&mut self, entry: F) -> Block<R> where F : Fn(&mut Self) -> Option<R> {
+		let mut list = Block::new();
 
 		loop {
 			let e = entry(self);
 			match e {
-				Some(e) => list.push(e),
+				Some(e) => list.vals.push(e),
 				_ => break
 			}
 			if self.is_term() {
@@ -183,10 +189,10 @@ impl<'c> Parser<'c> {
 		list
 	}
 
-	fn block<F, R>(&mut self, baseline: Indent, pos: Option<Indent>, term: F) -> Option<Spanned<R>> where F : FnOnce(&mut Self) -> R {
+	fn block_<F, R>(&mut self, baseline: Indent, pos: Option<Indent>, term: F) -> Option<N<R>> where F : FnOnce(&mut Self) -> R {
 		if self.is(Token::Line) {
 			if self.lexer.indent_newline(baseline, pos) {
-				Some(spanned!(self, {
+				Some(noded!(self, {
 					self.print("New block");
 					
 					let r = term(self);
@@ -207,6 +213,10 @@ impl<'c> Parser<'c> {
 		}
 	}
 
+	fn block<T, F>(&mut self, baseline: Indent, f: F) -> Block_<T> where F : Fn(&mut Self) -> Option<T> {
+		self.block_(baseline, None, |s| s.entries(f)).unwrap_or(N::new(self.lexer.src, lexer::SPAN_ERROR, Block::new()))
+	}
+
 	fn span(&self, start: Span) -> Span {
 		Span {
 			start: start.start,
@@ -214,18 +224,18 @@ impl<'c> Parser<'c> {
 		}
 	}
 
-	fn items(&mut self) -> Vec<Item_> {
+	fn items(&mut self) -> Block<Item_> {
 		self.entries(Parser::try_item)
 	}
 	
 	fn try_item(&mut self) -> Option<Item_> {
-		span_wrap!(self, {
+		node_wrap!(self, {
 			match self.tok() {
 				Token::Name(KW_DATA) => {
 					let baseline = self.lexer.indent;
 					self.step();
 					let ident = self.ident();
-					let block = self.block(baseline, None, |s| s.items());
+					let block = self.block(baseline, Parser::try_item);
 
 					Some(Item::Data(ident, block))
 				}
@@ -234,7 +244,7 @@ impl<'c> Parser<'c> {
 					self.step();
 					let ident = self.ident();
 					let params = self.bracket_seq(Bracket::Parent, |parser| Some(parser.ident()));
-					let block = self.block(baseline, None, |s| s.exprs());
+					let block = self.block(baseline, Parser::try_expr);
 
 					Some(Item::Fn(ident, params, block))
 				}
@@ -243,7 +253,7 @@ impl<'c> Parser<'c> {
 		})
 	}
 
-	fn exprs(&mut self) -> Vec<Expr_> {
+	fn exprs(&mut self) -> Block<Expr_> {
 		self.entries(Parser::try_expr)
 	}
 	
@@ -252,18 +262,21 @@ impl<'c> Parser<'c> {
 			Some(e) => e,
 			_ => {
 				self.expected("expression");
-				Spanned::new(lexer::SPAN_ERROR, Expr::Error)
+				N::new(self.lexer.src, lexer::SPAN_ERROR, Expr::Error)
 			}
 		}
 	}
 
 	fn try_expr(&mut self) -> Option<Expr_> {
-		span_wrap!(self, {
+		node_wrap!(self, {
 			match self.tok() {
 				Token::Name(KW_IF) => Some(self._if()),
 				Token::Name(KW_RETURN) => {
 					self.step();
 					Some(Expr::Return(Box::new(self.expr())))
+				}
+				Token::Name(_) => {
+					Some(Expr::Ref(self.ident(), NONE))
 				}
 				_ => None
 			}
@@ -275,10 +288,11 @@ impl<'c> Parser<'c> {
 		let baseline = self.lexer.indent;
 		self.step();
 		let cond = self.expr();
-		let block = self.block(baseline, Some(pos), |s| s.entries(Parser::try_expr));
+
+		let block = self.block_(baseline, Some(pos), |s| s.entries(Parser::try_expr)).unwrap_or(N::new(self.lexer.src, lexer::SPAN_ERROR, Block::new()));
 
 		let else_block = if self.is(Token::Line) && self.lexer.peek_ident() == Some(KW_ELSE) {
-			span_wrap!(self, {
+			node_wrap!(self, {
 				self.step();
 				debug_assert!(self.is(Token::Name(KW_ELSE)));
 				let else_baseline = self.lexer.indent;
@@ -287,7 +301,7 @@ impl<'c> Parser<'c> {
 				if self.is(Token::Name(KW_IF)) {
 					Some(self._if())
 				} else {
-					self.block(else_baseline, None, |s| s.entries(Parser::try_expr)).map(|b| Expr::Block(Some(b)))
+					Some(Expr::Block(self.block(else_baseline, Parser::try_expr)))
 				}
 			}).map(|v| Box::new(v))
 		} else {
@@ -300,8 +314,7 @@ impl<'c> Parser<'c> {
 
 }
 
-pub fn parse(src: &str) {
-	let src = Source::new(Rc::new(Context::new()), "input".to_string(), src);
+pub fn parse(src: &Source) -> Block_<Item_> {
 	Parser::new(&src).parse()
 }
 

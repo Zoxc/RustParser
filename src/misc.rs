@@ -5,11 +5,12 @@ use parser;
 use lexer;
 use lexer::Span;
 use interner::{Val, Interner};
+use ast::Id;
 
 macro_rules! intern_type {
     ($n:ident) => {
 
-		#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+		#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 		pub struct $n(pub u32);
 
 		impl Val for $n {
@@ -37,6 +38,7 @@ pub struct Interners {
 pub enum Msg {
 	Lexer(lexer::Msg),
 	Parser(parser::Msg),
+	Resolution(Name),
 }
 
 impl Msg {
@@ -44,6 +46,7 @@ impl Msg {
 		match *self {
 			Msg::Parser(ref msg) => msg.msg(src),
 			Msg::Lexer(ref msg) => msg.msg(src),
+			Msg::Resolution(name) => format!("Unknown identifier '{}'", src.get_name(name)),
 		}
 	}
 }
@@ -114,13 +117,20 @@ pub mod interned {
 
 pub struct Context {
 	pub interners: Interners,
+	id_count: RefCell<u32>,
 }
 
 impl Context {
 	pub fn new() -> Context {
 		Context {
 			interners: interned::new_interners(),
+			id_count: RefCell::new(0),
 		}
+	}
+
+	pub fn new_id(&self) -> Id {
+		*self.id_count.borrow_mut() += 1;
+		Id(*self.id_count.borrow_mut())
 	}
 }
 
@@ -139,6 +149,10 @@ impl Source {
 			src: format!("{}\0", src),
 			msgs: RefCell::new(Vec::new()),
 		}
+	}
+
+	pub fn get_name(&self, n: Name) -> String {
+		self.ctx.interners.name.get(n).to_string()
 	}
 
 	pub fn msg(&self, span: Span, msg: Msg) {
