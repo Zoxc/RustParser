@@ -72,12 +72,27 @@ impl<T> Block<T> {
 
 pub type Block_<T> = N<Block<T>>;
 
+pub type FnParam_ = N<FnParam>;
+
+#[derive(Clone)]
+pub struct FnParam(pub Ident, pub Ty_);
+
 pub type Item_ = N<Item>;
 
 #[derive(Clone)]
 pub enum Item {
 	Data(Ident, Block_<N<Item>>),
-	Fn(Ident, Vec<Ident>, Block_<N<Expr>>),
+	Fn(Ident, Vec<FnParam_>, Block_<Expr_>),
+}
+
+pub type Ty_ = N<Ty>;
+
+#[derive(Clone)]
+pub enum Ty {
+	Error,
+	Infer,
+	Ptr(Box<Ty_>),
+	Ref(Ident, Id),
 }
 
 pub type Expr_ = N<Expr>;
@@ -88,6 +103,8 @@ pub enum Expr {
 	If(Box<N<Expr>>, Block_<N<Expr>>, Option<Box<N<Expr>>>),
 	Return(Box<N<Expr>>),
 	Block(Block_<N<Expr>>),
+	Loop(Block_<Expr_>),
+	Break,
 	Ref(Ident, Id),
 }
 
@@ -118,6 +135,21 @@ pub mod fold {
 			this.fold_item(v);
 		}
 	}
+
+	pub fn fold_fn<T: Folder>(this: &mut T, _info: Info, _name: Ident, params: &mut Vec<FnParam_>, block: &mut Block_<Expr_>) {
+		fold_fn_params(this, params);
+		this.fold_expr_block(block);
+	}
+
+	pub fn fold_fn_param<T: Folder>(this: &mut T, param: &mut FnParam_) {
+		this.fold_ty(&mut param.val.1);
+	}
+
+	pub fn fold_fn_params<T: Folder>(this: &mut T, vals: &mut Vec<FnParam_>) {
+		for v in vals.iter_mut() {
+			this.fold_fn_param(v);
+		}
+	}
 }
 
 pub trait Folder: Sized {
@@ -133,8 +165,12 @@ pub trait Folder: Sized {
 		fold::fold_item_block(self, block);
 	}
 
-	fn fold_fn(&mut self, _info: Info, _name: Ident, _params: &mut Vec<Ident>, block: &mut Block_<Expr_>) {
-		fold::fold_expr_block(self, block);
+	fn fold_fn(&mut self, info: Info, name: Ident, params: &mut Vec<FnParam_>, block: &mut Block_<Expr_>) {
+		fold::fold_fn(self, info, name, params, block);
+	}
+
+	fn fold_fn_param(&mut self, param: &mut FnParam_) {
+		fold::fold_fn_param(self, param);
 	}
 
 	fn fold_item(&mut self, val: &mut Item_) {
@@ -144,11 +180,21 @@ pub trait Folder: Sized {
 		};
 	}
 
+	fn fold_ty(&mut self, val: &mut Ty_) {
+		match val.val {
+			Ty::Infer => (),
+			Ty::Error => (),
+			Ty::Ptr(ref mut t) => self.fold_ty(t), 
+			Ty::Ref(ident, ref mut id) => self.fold_ref(ident, id),
+		};
+	}
+
 	fn fold_ref(&mut self, _ident: Ident, _id: &mut Id) {
 	}
 
 	fn fold_expr(&mut self, val: &mut Expr_) {
 		match val.val {
+			Expr::Break => (),
 			Expr::Error => (),
 			Expr::Ref(ident, ref mut id) => self.fold_ref(ident, id),
 			Expr::If(ref mut cond, ref mut then, ref mut otherwise) => {
@@ -160,6 +206,7 @@ pub trait Folder: Sized {
 			},
 			Expr::Return(ref mut ret) => self.fold_expr(ret),
 			Expr::Block(ref mut b) => self.fold_expr_block(b),
+			Expr::Loop(ref mut b) => self.fold_expr_block(b),
 		};
 	}
 }

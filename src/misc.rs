@@ -1,6 +1,7 @@
 use std;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use parser;
 use lexer;
 use lexer::Span;
@@ -99,11 +100,15 @@ pub mod interned {
 		KW_ELSE, "else";
 		KW_USE, "use";
 		KW_BREAK, "break";
+		KW_LOOP, "loop";
 		KW_CONTINUE, "continue";
 	);
 
 	interned!(Op: make_op_interner:
 		OP_COMMA, ",";
+		OP_STAR, "*";
+		OP_PLUS, "+";
+		OP_ASSIGN, "=";
 	);
 
 	pub fn new_interners() -> Interners {
@@ -115,15 +120,26 @@ pub mod interned {
 	}
 }
 
+pub type OpInfo = u32;
+
 pub struct Context {
 	pub interners: Interners,
+	pub op_map: HashMap<Op, OpInfo>,
 	id_count: RefCell<u32>,
 }
 
 impl Context {
+	fn op_map() -> HashMap<Op, OpInfo> {
+		let mut map = HashMap::new();
+		let mut i = 0;
+		map.insert(interned::OP_PLUS, i);
+		map
+	}
+
 	pub fn new() -> Context {
 		Context {
 			interners: interned::new_interners(),
+			op_map: Context::op_map(),
 			id_count: RefCell::new(0),
 		}
 	}
@@ -153,6 +169,10 @@ impl Source {
 
 	pub fn get_name(&self, n: Name) -> String {
 		self.ctx.interners.name.get(n).to_string()
+	}
+
+	pub fn get_op(&self, o: Op) -> String {
+		self.ctx.interners.op.get(o).to_string()
 	}
 
 	pub fn msg(&self, span: Span, msg: Msg) {

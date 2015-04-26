@@ -18,6 +18,7 @@ fn item_block<'c>(map: &mut NodeMap<'c>, block: &'c Block_<Item_>) {
 fn expr<'c>(map: &mut NodeMap<'c>, node: &'c Expr_) {
 	map.insert(node.info.id, Lookup::Expr(node));
 	match node.val {
+		Expr::Break => (),
 		Expr::Error => (),
 		Expr::Ref(_, _) => (),
 		Expr::If(ref cond, ref then, ref otherwise) => {
@@ -29,6 +30,7 @@ fn expr<'c>(map: &mut NodeMap<'c>, node: &'c Expr_) {
 		},
 		Expr::Return(ref ret) => expr(map, ret),
 		Expr::Block(ref b) => expr_block(map, b),
+		Expr::Loop(ref b) => expr_block(map, b),
 	};
 }
 

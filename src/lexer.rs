@@ -227,7 +227,7 @@ impl<'c> Lexer<'c> {
 		}
 	}
 
-	fn intern<T: Val + Copy>(&self, interner: &'c Interner<T>, span: Span) -> T {
+	pub fn intern<T: Val + Copy>(&self, interner: &'c Interner<T>, span: Span) -> T {
 		interner.intern(std::str::from_utf8(self.to_slice(span)).unwrap())
 	}
 

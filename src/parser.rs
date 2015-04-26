@@ -36,6 +36,14 @@ macro_rules! noded {
     }};
 }
 
+macro_rules! extend {
+    ($this:expr, $node:expr, $c:expr) => {{
+		let start = $node.span;
+		let val = $c;
+		N::new($this.lexer.src, $this.span(start), val)
+    }};
+}
+
 macro_rules! node_wrap {
     ($this:expr, $c:expr) => {{
 		let start = $this.lexer.span;
@@ -53,6 +61,31 @@ impl<'c> Parser<'c> {
 		Parser {
 			lexer: lexer::Lexer::new(src),
 			last_ended: 0,
+		}
+	}
+
+	fn is_op_prefix(&self, c: char) -> bool {
+		match self.tok() {
+			Token::Op(op) => self.lexer.src.get_op(op).chars().next().unwrap() == c,
+			_ => false
+		}
+	}
+
+	fn skip_op_prefix(&mut self) {
+		match self.tok() {
+			Token::Op(op) => {
+				if self.lexer.span.len == 1 {
+					self.step();
+				} else {
+				self.last_ended = self.lexer.span.start;
+				self.lexer.span.start += 1;
+				self.lexer.span.len -= 1;
+				self.lexer.token = Token::Op(self.lexer.intern(&self.lexer.src.ctx.interners.op, self.lexer.span));
+    			self.print(&format!("SkipTok {:?}", self.lexer.token));
+					
+				}
+			}
+			_ => panic!()
 		}
 	}
 
@@ -243,7 +276,12 @@ impl<'c> Parser<'c> {
 					let baseline = self.lexer.indent;
 					self.step();
 					let ident = self.ident();
-					let params = self.bracket_seq(Bracket::Parent, |parser| Some(parser.ident()));
+					let params = self.bracket_seq(Bracket::Parent, |parser| {
+						Some(noded!(parser, {
+						let (name, ty) = parser.name_and_type();
+						FnParam(name, ty)
+						}))
+					});
 					let block = self.block(baseline, Parser::try_expr);
 
 					Some(Item::Fn(ident, params, block))
@@ -253,32 +291,149 @@ impl<'c> Parser<'c> {
 		})
 	}
 
-	fn exprs(&mut self) -> Block<Expr_> {
-		self.entries(Parser::try_expr)
-	}
-	
-	fn expr(&mut self) -> Expr_ {
-		match self.try_expr() {
-			Some(e) => e,
+	fn name_and_type(&mut self) -> (Ident, Ty_) {
+		let ty = self.ty();
+		match self.tok() {
+			Token::Name(_) => {
+				(self.ident(), ty)
+			}
 			_ => {
-				self.expected("expression");
-				N::new(self.lexer.src, lexer::SPAN_ERROR, Expr::Error)
+				match ty.val {
+					Ty::Ref(ident, name) => {
+						(ident, noded!(self, Ty::Infer))
+					}
+					_ => {
+						self.expected("variable name");
+						(Ident(spanned!(self, NAME_ERROR)), noded!(self, Ty::Error))
+					}
+				}
 			}
 		}
 	}
 
-	fn try_expr(&mut self) -> Option<Expr_> {
-		node_wrap!(self, {
+	fn ty(&mut self) -> Ty_ {
+		self.ty_ptr()
+	}
+
+	fn ty_ptr(&mut self) -> Ty_ {
+		let mut r = self.ty_factor();
+		while self.is_op_prefix('*') {
+			r = extend!(self, r, {
+				self.skip_op_prefix();
+				Ty::Ptr(Box::new(r))
+			});
+		}
+		r
+	}
+
+	fn ty_factor(&mut self) -> Ty_ {
+		noded!(self, {
 			match self.tok() {
-				Token::Name(KW_IF) => Some(self._if()),
+				Token::Name(_) => {
+					Ty::Ref(self.ident(), NONE)
+				}
+				_ => {
+					self.expected("type");
+					Ty::Error
+				}
+			}
+		})
+	}
+
+	fn exprs(&mut self) -> Block<Expr_> {
+		self.entries(Parser::try_expr)
+	}
+	
+	fn try_expr(&mut self) -> Option<Expr_> {
+		if self.is_expr() {
+			Some(self.expr())
+		} else {
+			None
+		}
+	}
+
+	fn is_expr(&self) -> bool {
+		match self.tok() {
+			Token::Name(_) => true,
+			_ => false
+		}
+	}
+
+	fn expr(&mut self) -> Expr_ {
+		noded!(self, {
+			match self.tok() {
+				Token::Name(KW_LOOP) => {
+					let baseline = self.lexer.indent;
+					self.step();
+					Expr::Loop(self.block(baseline, Parser::try_expr))
+				}
+				Token::Name(KW_BREAK) => Expr::Break,
+				Token::Name(KW_IF) => self._if(),
 				Token::Name(KW_RETURN) => {
 					self.step();
-					Some(Expr::Return(Box::new(self.expr())))
+					Expr::Return(Box::new(self.expr()))
 				}
 				Token::Name(_) => {
-					Some(Expr::Ref(self.ident(), NONE))
+					Expr::Ref(self.ident(), NONE)
 				}
-				_ => None
+				_ =>  self.assign_operator()
+			}
+		})
+	}
+
+	fn assign_operator(&mut self) -> Expr_ {
+		let r = self.pred_operator(self.unary());
+
+		match self.tok() {
+			Token::Op(OP_ASSIGN) => {
+				extend!(self, r, {
+					self.step();
+					Expr::Assign(OP_ASSIGN, r, self.expr())
+				})
+			},
+			_ => r
+		}
+	}
+
+	fn prec_operator(&mut self, mut left: Expr_, min: u32) -> Expr_ {
+		while self.is_prec_op() {
+			let Token::Op(op) = self.tok();
+			let src = self.lexer.span;
+			let prec = self.src.ctx.op_map.get(op);
+			if prec < min {
+				break
+			}
+			self.step();
+			let mut right = self.unary();
+
+			while self.is_prec_op() {
+				let Token::Op(next_op) = self.tok();
+				let next_prec = self.src.ctx.op_map.get(next_op);
+
+				if next_prec <= prec {
+					break
+				}
+
+				right = self.prec_operator(right, next_prec);
+			}
+
+			left = extend!(self, left, Expr::BinOp(left, op, right))
+
+		}
+
+		left
+	}
+
+	fn factor(&mut self) -> Expr_ {
+		noded!(self, {
+			match self.tok() {
+				Token::Name(_) => {
+					Expr::Ref(self.ident(), NONE)
+				}
+				_ => {
+					self.expected("expression");
+					Expr::Error
+				}
 			}
 		})
 	}
@@ -292,26 +447,24 @@ impl<'c> Parser<'c> {
 		let block = self.block_(baseline, Some(pos), |s| s.entries(Parser::try_expr)).unwrap_or(N::new(self.lexer.src, lexer::SPAN_ERROR, Block::new()));
 
 		let else_block = if self.is(Token::Line) && self.lexer.peek_ident() == Some(KW_ELSE) {
-			node_wrap!(self, {
+			Some(Box::new(noded!(self, {
 				self.step();
 				debug_assert!(self.is(Token::Name(KW_ELSE)));
 				let else_baseline = self.lexer.indent;
 				self.step();
 
 				if self.is(Token::Name(KW_IF)) {
-					Some(self._if())
+					self._if()
 				} else {
-					Some(Expr::Block(self.block(else_baseline, Parser::try_expr)))
+					Expr::Block(self.block(else_baseline, Parser::try_expr))
 				}
-			}).map(|v| Box::new(v))
+			})))
 		} else {
 			None
 		};
 
 		Expr::If(Box::new(cond), block, else_block)
 	}
-
-
 }
 
 pub fn parse(src: &Source) -> Block_<Item_> {

@@ -37,14 +37,32 @@ fn expr(src: &Source, e: &Expr_) -> String {
 			r
 		},
 		Expr::Return(ref ret) => format!("return ({})", expr(src, ret)),
+		Expr::Loop(ref b) => format!("loop{}", block(src, b)),
+		Expr::Break => format!("break"),
 		Expr::Block(ref b) => block(src, b),
 		Expr::Error => format!("<error>"),
+	}
+}
+
+fn ty(src: &Source, t: &Ty_) -> String {
+	match t.val {
+		Ty::Error => format!("<error>"),
+		Ty::Ptr(ref t) => format!("{}*", ty(src, t)),
+		Ty::Infer => "_".to_string(),
+		Ty::Ref(i, _) => ident(src, i),
+	}
+}
+
+fn fn_param(src: &Source, p: &FnParam_) -> String {
+	match p.val.1.val {
+		Ty::Infer => ident(src, p.val.0),
+		_ => format!("{} {}", ty(src, &p.val.1), ident(src, p.val.0))
 	}
 }
 
 pub fn item(src: &Source, e: &Item_) -> String {
 	match e.val {
 		Item::Data(i, ref b) => format!("data {}{}", ident(src, i), item_block(src, b)),
-		Item::Fn(i, ref p, ref b) => format!("fn {}({}){}", ident(src, i), p.iter().map(|param| ident(src, *param)).collect::<Vec<String>>().connect(", "), block(src, b)),
+		Item::Fn(i, ref p, ref b) => format!("fn {}({}){}", ident(src, i), p.iter().map(|param| fn_param(src, param)).collect::<Vec<String>>().connect(", "), block(src, b)),
 	}
 }

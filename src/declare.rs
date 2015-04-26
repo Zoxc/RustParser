@@ -20,11 +20,17 @@ impl<'c> Folder for DeclarePass<'c> {
 		fold::fold_item_block(self, block);
 	}
 
-	fn fold_fn(&mut self, info: Info, name: Ident, _params: &mut Vec<Ident>, block: &mut Block_<Expr_>) {
-		self.symbols.name(info.id, name);
-		fold::fold_expr_block(self, block);
+	fn fold_fn_param(&mut self, param: &mut FnParam_) {
+		self.symbols.name(param.info.id, param.val.0);
+		fold::fold_fn_param(self, param);
 	}
 
+	fn fold_fn(&mut self, info: Info, name: Ident, _params: &mut Vec<FnParam_>, block: &mut Block_<Expr_>) {
+		self.symbols.name(info.id, name);
+		let mut pass = DeclarePass { symbols: &mut block.val.symbols };
+		fold::fold_exprs(&mut pass, &mut block.val.vals);
+		fold::fold_fn_params(&mut pass, _params);
+	}
 }
 
 pub fn run(block: &mut Block_<Item_>) {
