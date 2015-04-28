@@ -133,6 +133,8 @@ impl Context {
 		let mut map = HashMap::new();
 		let mut i = 0;
 		map.insert(interned::OP_PLUS, i);
+		i += 1;
+		map.insert(interned::OP_STAR, i);
 		map
 	}
 

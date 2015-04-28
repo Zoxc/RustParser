@@ -18,15 +18,15 @@ impl<'c> ResolutionPass<'c> {
 	}
 }
 
-impl<'c> Folder for ResolutionPass<'c> {
+impl<'c> FolderMut for ResolutionPass<'c> {
 	fn fold_expr_block(&mut self, block: &mut Block_<Expr_>) {
 		let mut pass = ResolutionPass { src: self.src, parent: Some(&self), symbols: &mut block.val.symbols };
-		fold::fold_exprs(&mut pass, &mut block.val.vals);
+		fold_mut::fold_exprs(&mut pass, &mut block.val.vals);
 	}
 
 	fn fold_item_block(&mut self, block: &mut Block_<Item_>) {
 		let mut pass = ResolutionPass { src: self.src, parent: Some(&self), symbols: &mut block.val.symbols };
-		fold::fold_items(&mut pass, &mut block.val.vals);
+		fold_mut::fold_items(&mut pass, &mut block.val.vals);
 	}
 
 	fn fold_ref(&mut self, ident: Ident, id: &mut Id) {

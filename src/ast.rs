@@ -1,5 +1,5 @@
 use lexer::{Span, Spanned};
-use misc::{Name, Source};
+use misc::{Name, Op, Source};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -100,6 +100,9 @@ pub type Expr_ = N<Expr>;
 #[derive(Clone)]
 pub enum Expr {
 	Error,
+	Assign(Op, Box<N<Expr>>, Box<N<Expr>>),
+	BinOp(Box<N<Expr>>, Op, Box<N<Expr>>),
+	UnaryOp(Op, Box<N<Expr>>),
 	If(Box<N<Expr>>, Block_<N<Expr>>, Option<Box<N<Expr>>>),
 	Return(Box<N<Expr>>),
 	Block(Block_<N<Expr>>),
@@ -113,64 +116,64 @@ pub enum Lookup<'c> {
 	Expr(&'c Expr_),
 }
 
-pub mod fold {
+pub mod fold_mut {
 	use super::*;
 
-	pub fn fold_expr_block<T: Folder>(this: &mut T, block: &mut Block_<Expr_>) {
+	pub fn fold_expr_block<T: FolderMut>(this: &mut T, block: &mut Block_<Expr_>) {
 		fold_exprs(this, &mut block.val.vals);
 	}
 
-	pub fn fold_exprs<T: Folder>(this: &mut T, vals: &mut Vec<Expr_>) {
+	pub fn fold_exprs<T: FolderMut>(this: &mut T, vals: &mut Vec<Expr_>) {
 		for v in vals.iter_mut() {
 			this.fold_expr(v);
 		}
 	}
 
-	pub fn fold_item_block<T: Folder>(this: &mut T, block: &mut Block_<Item_>) {
+	pub fn fold_item_block<T: FolderMut>(this: &mut T, block: &mut Block_<Item_>) {
 		fold_items(this, &mut block.val.vals);
 	}
 
-	pub fn fold_items<T: Folder>(this: &mut T, vals: &mut Vec<Item_>) {
+	pub fn fold_items<T: FolderMut>(this: &mut T, vals: &mut Vec<Item_>) {
 		for v in vals.iter_mut() {
 			this.fold_item(v);
 		}
 	}
 
-	pub fn fold_fn<T: Folder>(this: &mut T, _info: Info, _name: Ident, params: &mut Vec<FnParam_>, block: &mut Block_<Expr_>) {
+	pub fn fold_fn<T: FolderMut>(this: &mut T, _info: Info, _name: Ident, params: &mut Vec<FnParam_>, block: &mut Block_<Expr_>) {
 		fold_fn_params(this, params);
 		this.fold_expr_block(block);
 	}
 
-	pub fn fold_fn_param<T: Folder>(this: &mut T, param: &mut FnParam_) {
+	pub fn fold_fn_param<T: FolderMut>(this: &mut T, param: &mut FnParam_) {
 		this.fold_ty(&mut param.val.1);
 	}
 
-	pub fn fold_fn_params<T: Folder>(this: &mut T, vals: &mut Vec<FnParam_>) {
+	pub fn fold_fn_params<T: FolderMut>(this: &mut T, vals: &mut Vec<FnParam_>) {
 		for v in vals.iter_mut() {
 			this.fold_fn_param(v);
 		}
 	}
 }
 
-pub trait Folder: Sized {
+pub trait FolderMut: Sized {
 	fn fold_expr_block(&mut self, block: &mut Block_<Expr_>) {
-		fold::fold_expr_block(self, block);
+		fold_mut::fold_expr_block(self, block);
 	}
 
 	fn fold_item_block(&mut self, block: &mut Block_<Item_>) {
-		fold::fold_item_block(self, block);
+		fold_mut::fold_item_block(self, block);
 	}
 
 	fn fold_data(&mut self, _info: Info, _name: Ident, block: &mut Block_<Item_>) {
-		fold::fold_item_block(self, block);
+		fold_mut::fold_item_block(self, block);
 	}
 
 	fn fold_fn(&mut self, info: Info, name: Ident, params: &mut Vec<FnParam_>, block: &mut Block_<Expr_>) {
-		fold::fold_fn(self, info, name, params, block);
+		fold_mut::fold_fn(self, info, name, params, block);
 	}
 
 	fn fold_fn_param(&mut self, param: &mut FnParam_) {
-		fold::fold_fn_param(self, param);
+		fold_mut::fold_fn_param(self, param);
 	}
 
 	fn fold_item(&mut self, val: &mut Item_) {
@@ -204,9 +207,137 @@ pub trait Folder: Sized {
 					self.fold_expr(v);
 				};
 			},
+			Expr::Assign(_, ref mut lhs, ref mut rhs) => {
+				self.fold_expr(lhs);
+				self.fold_expr(rhs);
+			} 
+			Expr::UnaryOp(_, ref mut e) => {
+				self.fold_expr(e);
+			} 
+			Expr::BinOp(ref mut lhs, _, ref mut rhs) => {
+				self.fold_expr(lhs);
+				self.fold_expr(rhs);
+			} 
 			Expr::Return(ref mut ret) => self.fold_expr(ret),
 			Expr::Block(ref mut b) => self.fold_expr_block(b),
 			Expr::Loop(ref mut b) => self.fold_expr_block(b),
 		};
+	}
+}
+
+
+pub mod fold {
+	use super::*;
+
+	pub fn fold_expr_block<'c, T: Folder<'c>>(this: &mut T, block: &'c Block_<Expr_>) {
+		fold_exprs(this, &block.val.vals);
+	}
+
+	pub fn fold_exprs<'c, T: Folder<'c>>(this: &mut T, vals: &'c Vec<Expr_>) {
+		for v in vals.iter() {
+			this.fold_expr(v);
+		}
+	}
+
+	pub fn fold_item_block<'c, T: Folder<'c>>(this: &mut T, block: &'c Block_<Item_>) {
+		fold_items(this, &block.val.vals);
+	}
+
+	pub fn fold_item<'c, T: Folder<'c>>(this: &mut T, val: &'c Item_) {
+		match val.val {
+			Item::Data(i, ref b) => this.fold_data(val.info, i, b),
+			Item::Fn(i, ref p, ref b) => this.fold_fn(val.info, i, p, b)
+		};
+	}
+
+	pub fn fold_expr<'c, T: Folder<'c>>(this: &mut T, val: &'c Expr_) {
+		match val.val {
+			Expr::Break => (),
+			Expr::Error => (),
+			Expr::Ref(ident, ref id) => this.fold_ref(ident, id),
+			Expr::If(ref cond, ref then, ref otherwise) => {
+				this.fold_expr(cond);
+				this.fold_expr_block(then);
+				if let Some(ref v) = *otherwise {
+					this.fold_expr(v);
+				};
+			},
+			Expr::Assign(_, ref lhs, ref rhs) => {
+				this.fold_expr(lhs);
+				this.fold_expr(rhs);
+			} 
+			Expr::UnaryOp(_, ref e) => {
+				this.fold_expr(e);
+			} 
+			Expr::BinOp(ref lhs, _, ref rhs) => {
+				this.fold_expr(lhs);
+				this.fold_expr(rhs);
+			} 
+			Expr::Return(ref ret) => this.fold_expr(ret),
+			Expr::Block(ref b) => this.fold_expr_block(b),
+			Expr::Loop(ref b) => this.fold_expr_block(b),
+		};
+	}
+	pub fn fold_items<'c, T: Folder<'c>>(this: &mut T, vals: &'c Vec<Item_>) {
+		for v in vals.iter() {
+			this.fold_item(v);
+		}
+	}
+
+	pub fn fold_fn<'c, T: Folder<'c>>(this: &mut T, _info: Info, _name: Ident, params: &'c Vec<FnParam_>, block: &'c Block_<Expr_>) {
+		fold_fn_params(this, params);
+		this.fold_expr_block(block);
+	}
+
+	pub fn fold_fn_param<'c, T: Folder<'c>>(this: &mut T, param: &'c FnParam_) {
+		this.fold_ty(&param.val.1);
+	}
+
+	pub fn fold_fn_params<'c, T: Folder<'c>>(this: &mut T, vals: &'c Vec<FnParam_>) {
+		for v in vals.iter() {
+			this.fold_fn_param(v);
+		}
+	}
+}
+
+pub trait Folder<'c>: Sized {
+	fn fold_expr_block(&mut self, block: &'c Block_<Expr_>) {
+		fold::fold_expr_block(self, block);
+	}
+
+	fn fold_item_block(&mut self, block: &'c Block_<Item_>) {
+		fold::fold_item_block(self, block);
+	}
+
+	fn fold_data(&mut self, _info: Info, _name: Ident, block: &'c Block_<Item_>) {
+		fold::fold_item_block(self, block);
+	}
+
+	fn fold_fn(&mut self, info: Info, name: Ident, params: &'c Vec<FnParam_>, block: &'c Block_<Expr_>) {
+		fold::fold_fn(self, info, name, params, block);
+	}
+
+	fn fold_fn_param(&mut self, param: &'c FnParam_) {
+		fold::fold_fn_param(self, param);
+	}
+
+	fn fold_item(&mut self, val: &'c Item_) {
+		fold::fold_item(self, val);
+	}
+
+	fn fold_ty(&mut self, val: &'c Ty_) {
+		match val.val {
+			Ty::Infer => (),
+			Ty::Error => (),
+			Ty::Ptr(ref t) => self.fold_ty(t), 
+			Ty::Ref(ident, ref id) => self.fold_ref(ident, id),
+		};
+	}
+
+	fn fold_ref(&mut self, _ident: Ident, _id: &'c Id) {
+	}
+
+	fn fold_expr(&mut self, val: &'c Expr_) {
+		fold::fold_expr(self, val);
 	}
 }

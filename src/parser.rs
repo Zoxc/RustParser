@@ -4,7 +4,7 @@ use ast::*;
 use print;
 use misc;
 use misc::interned::*;
-use misc::{Source, Name};
+use misc::{Source, Op, Name};
 
 pub enum Msg {
 	Expected(String, Token),
@@ -38,7 +38,7 @@ macro_rules! noded {
 
 macro_rules! extend {
     ($this:expr, $node:expr, $c:expr) => {{
-		let start = $node.span;
+		let start = $node.info.span;
 		let val = $c;
 		N::new($this.lexer.src, $this.span(start), val)
     }};
@@ -73,7 +73,7 @@ impl<'c> Parser<'c> {
 
 	fn skip_op_prefix(&mut self) {
 		match self.tok() {
-			Token::Op(op) => {
+			Token::Op(_) => {
 				if self.lexer.span.len == 1 {
 					self.step();
 				} else {
@@ -299,7 +299,7 @@ impl<'c> Parser<'c> {
 			}
 			_ => {
 				match ty.val {
-					Ty::Ref(ident, name) => {
+					Ty::Ref(ident, _) => {
 						(ident, noded!(self, Ty::Infer))
 					}
 					_ => {
@@ -340,10 +340,6 @@ impl<'c> Parser<'c> {
 		})
 	}
 
-	fn exprs(&mut self) -> Block<Expr_> {
-		self.entries(Parser::try_expr)
-	}
-	
 	fn try_expr(&mut self) -> Option<Expr_> {
 		if self.is_expr() {
 			Some(self.expr())
@@ -360,68 +356,95 @@ impl<'c> Parser<'c> {
 	}
 
 	fn expr(&mut self) -> Expr_ {
-		noded!(self, {
-			match self.tok() {
-				Token::Name(KW_LOOP) => {
+		match self.tok() {
+			Token::Name(KW_LOOP) => {
+				noded!(self, {
 					let baseline = self.lexer.indent;
 					self.step();
 					Expr::Loop(self.block(baseline, Parser::try_expr))
-				}
-				Token::Name(KW_BREAK) => Expr::Break,
-				Token::Name(KW_IF) => self._if(),
-				Token::Name(KW_RETURN) => {
+				})
+			}
+			Token::Name(KW_BREAK) => {
+				noded!(self, {
+					self.step();
+					Expr::Break
+				})
+			},
+			Token::Name(KW_IF) => noded!(self, self._if()),
+			Token::Name(KW_RETURN) => {
+				noded!(self, {
 					self.step();
 					Expr::Return(Box::new(self.expr()))
-				}
-				Token::Name(_) => {
-					Expr::Ref(self.ident(), NONE)
-				}
-				_ =>  self.assign_operator()
+				})
 			}
-		})
+			_ => self.assign_operator()
+		}
 	}
 
 	fn assign_operator(&mut self) -> Expr_ {
-		let r = self.pred_operator(self.unary());
+		let u = self.unary();
+		let r = self.prec_operator(u, 0);
 
 		match self.tok() {
 			Token::Op(OP_ASSIGN) => {
 				extend!(self, r, {
 					self.step();
-					Expr::Assign(OP_ASSIGN, r, self.expr())
+					Expr::Assign(OP_ASSIGN, Box::new(r), Box::new(self.expr()))
 				})
 			},
 			_ => r
 		}
 	}
 
-	fn prec_operator(&mut self, mut left: Expr_, min: u32) -> Expr_ {
-		while self.is_prec_op() {
-			let Token::Op(op) = self.tok();
-			let src = self.lexer.span;
-			let prec = self.src.ctx.op_map.get(op);
-			if prec < min {
-				break
+	fn get_prec_op(&mut self, min: u32) -> Option<(Op, u32)> {
+		match self.tok() {
+			Token::Op(op) => {
+				self.lexer.src.ctx.op_map.get(&op).and_then(|prec| {
+					if *prec < min {
+						None
+					} else {
+						Some((op, *prec))
+					}
+				})
 			}
+			_ => None,
+		}
+	}
+
+	fn prec_operator(&mut self, mut left: Expr_, min: u32) -> Expr_ {
+		loop {
+			let (op, prec) = match self.get_prec_op(min) {
+				Some(v) => v,
+				None => break
+			};
+
 			self.step();
 			let mut right = self.unary();
 
-			while self.is_prec_op() {
-				let Token::Op(next_op) = self.tok();
-				let next_prec = self.src.ctx.op_map.get(next_op);
-
-				if next_prec <= prec {
-					break
-				}
-
-				right = self.prec_operator(right, next_prec);
+			loop {
+				let next_prec = match self.get_prec_op(prec) {
+					Some((_, v)) => v,
+					None => break
+				};
+				right = self.prec_operator(right, next_prec + 1);
 			}
 
-			left = extend!(self, left, Expr::BinOp(left, op, right))
-
+			left = extend!(self, left, Expr::BinOp(Box::new(left), op, Box::new(right)))
 		}
 
 		left
+	}
+
+	fn unary(&mut self) -> Expr_ {
+		match self.tok() {
+			Token::Op(op @ OP_PLUS) => {
+				noded!(self, {
+					self.step();
+					Expr::UnaryOp(op, Box::new(self.unary()))
+				})
+			}
+			_ => self.factor()
+		}
 	}
 
 	fn factor(&mut self) -> Expr_ {

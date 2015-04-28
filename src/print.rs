@@ -36,6 +36,9 @@ fn expr(src: &Source, e: &Expr_) -> String {
 			};
 			r
 		},
+		Expr::Assign(op, ref lhs, ref rhs) => format!("({} {} {})", expr(src, lhs), src.get_op(op), expr(src, rhs)),
+		Expr::BinOp(ref lhs, op, ref rhs) => format!("({} {} {})", expr(src, lhs), src.get_op(op), expr(src, rhs)),
+		Expr::UnaryOp(op, ref e) => format!("({}{})", src.get_op(op), expr(src, e)),
 		Expr::Return(ref ret) => format!("return ({})", expr(src, ret)),
 		Expr::Loop(ref b) => format!("loop{}", block(src, b)),
 		Expr::Break => format!("break"),
