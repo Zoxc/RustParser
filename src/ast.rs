@@ -254,7 +254,7 @@ pub mod fold {
 		match val.val {
 			Expr::Break => (),
 			Expr::Error => (),
-			Expr::Ref(ident, ref id) => this.fold_ref(ident, id),
+			Expr::Ref(ident, id) => this.fold_ref(ident, id),
 			Expr::If(ref cond, ref then, ref otherwise) => {
 				this.fold_expr(cond);
 				this.fold_expr_block(then);
@@ -330,11 +330,11 @@ pub trait Folder<'c>: Sized {
 			Ty::Infer => (),
 			Ty::Error => (),
 			Ty::Ptr(ref t) => self.fold_ty(t), 
-			Ty::Ref(ident, ref id) => self.fold_ref(ident, id),
+			Ty::Ref(ident, id) => self.fold_ref(ident, id),
 		};
 	}
 
-	fn fold_ref(&mut self, _ident: Ident, _id: &'c Id) {
+	fn fold_ref(&mut self, _ident: Ident, _id: Id) {
 	}
 
 	fn fold_expr(&mut self, val: &'c Expr_) {

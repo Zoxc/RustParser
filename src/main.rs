@@ -1,5 +1,7 @@
 #![feature(rustc_private)]
 
+extern crate arena;
+
 #[cfg(test)]
 extern crate quickcheck;
 
@@ -18,6 +20,9 @@ mod parser;
 mod declare;
 mod resolution;
 mod node_map;
+mod ty;
+mod infer;
+mod recursion;
 
 fn main() {
     let path = std::path::Path::new("test.txt");
@@ -33,6 +38,8 @@ fn main() {
     resolution::run(&src, &mut ast);
 
     let map = node_map::create(&ast);
+
+    infer::run(&ast, &map);
 
 	print!("{}", src.format_msgs());
 }
