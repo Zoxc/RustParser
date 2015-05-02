@@ -5,9 +5,7 @@ use ast::Id;
 pub struct Var(pub u32);
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct Substs<'t> {
-	list: Vec<Ty<'t>>
-}
+pub struct Substs<'t>(pub Vec<Ty<'t>>);
 
 pub type Ty<'t> = &'t Ty_<'t>;
 
@@ -15,6 +13,7 @@ pub type Ty<'t> = &'t Ty_<'t>;
 pub enum Ty_<'t> {
 	Error,
 	Int,
+	Tuple(Vec<Ty<'t>>),
 	Infer(Var),
 	Param(Name),
 	Ref(Id, Substs<'t>),
@@ -22,12 +21,12 @@ pub enum Ty_<'t> {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct TyParam<'t> {
-	name: Name,
-	hm: Ty<'t>,
+	pub name: Name,
+	pub hm: Ty<'t>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Scheme<'t> {
-	ty: Ty<'t>,
-	params: Vec<TyParam<'t>>,
+	pub ty: Ty<'t>,
+	pub params: Vec<TyParam<'t>>,
 }

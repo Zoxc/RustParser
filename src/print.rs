@@ -22,6 +22,10 @@ fn block(src: &Source, block: &Block_<Expr_>) -> String {
 	do_block(src, block, expr)
 }
 
+fn generics(src: &Source, generics: &Generics) -> String {
+	"[]".to_string()
+}
+
 pub fn item_block(src: &Source, block: &Block_<Item_>) -> String {
 	do_block(src, block, item)
 }
@@ -65,7 +69,7 @@ fn fn_param(src: &Source, p: &FnParam_) -> String {
 
 pub fn item(src: &Source, e: &Item_) -> String {
 	match e.val {
-		Item::Data(i, ref b) => format!("data {}{}", ident(src, i), item_block(src, b)),
-		Item::Fn(i, ref p, ref b) => format!("fn {}({}){}", ident(src, i), p.iter().map(|param| fn_param(src, param)).collect::<Vec<String>>().connect(", "), block(src, b)),
+		Item::Data(i, ref g, ref b) => format!("data {}{}{}", ident(src, i), generics(src, g), item_block(src, b)),
+		Item::Fn(ref d) => format!("fn {}{}({}){}", ident(src, d.name), generics(src, &d.generics), d.params.iter().map(|param| fn_param(src, param)).collect::<Vec<String>>().connect(", "), block(src, &d.block)),
 	}
 }

@@ -109,6 +109,7 @@ pub mod interned {
 		OP_STAR, "*";
 		OP_PLUS, "+";
 		OP_ASSIGN, "=";
+		OP_ARROW_RIGHT, "->";
 	);
 
 	pub fn new_interners() -> Interners {

@@ -257,6 +257,10 @@ impl<'c> Parser<'c> {
 		}
 	}
 
+	fn generics(&mut self) -> Generics {
+		Generics
+	}
+
 	fn items(&mut self) -> Block<Item_> {
 		self.entries(Parser::try_item)
 	}
@@ -268,23 +272,37 @@ impl<'c> Parser<'c> {
 					let baseline = self.lexer.indent;
 					self.step();
 					let ident = self.ident();
+					let generics = self.generics();
 					let block = self.block(baseline, Parser::try_item);
 
-					Some(Item::Data(ident, block))
+					Some(Item::Data(ident, generics, block))
 				}
 				Token::Name(KW_FN) => {
 					let baseline = self.lexer.indent;
 					self.step();
 					let ident = self.ident();
+					let generics = self.generics();
 					let params = self.bracket_seq(Bracket::Parent, |parser| {
 						Some(noded!(parser, {
 						let (name, ty) = parser.name_and_type();
 						FnParam(name, ty)
 						}))
 					});
+					let returns = if self.tok() == Token::Op(OP_ARROW_RIGHT) {
+						self.step();
+						self.ty()
+					} else {
+						noded!(self, Ty::Infer)
+					};
 					let block = self.block(baseline, Parser::try_expr);
 
-					Some(Item::Fn(ident, params, block))
+					Some(Item::Fn(FnDef {
+						name: ident, 
+						generics: generics,
+						params: params, 
+						returns: returns,
+						block: block,
+					}))
 				}
 				_ => None
 			}

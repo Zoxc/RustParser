@@ -77,12 +77,24 @@ pub type FnParam_ = N<FnParam>;
 #[derive(Clone)]
 pub struct FnParam(pub Ident, pub Ty_);
 
+#[derive(Clone)]
+pub struct Generics;
+
+#[derive(Clone)]
+pub struct FnDef {
+	pub name: Ident,
+	pub generics: Generics,
+	pub params: Vec<FnParam_>,
+	pub returns: Ty_,
+	pub block: Block_<Expr_>,
+}
+
 pub type Item_ = N<Item>;
 
 #[derive(Clone)]
 pub enum Item {
-	Data(Ident, Block_<N<Item>>),
-	Fn(Ident, Vec<FnParam_>, Block_<Expr_>),
+	Data(Ident, Generics, Block_<N<Item>>),
+	Fn(FnDef),
 }
 
 pub type Ty_ = N<Ty>;
@@ -139,9 +151,9 @@ pub mod fold_mut {
 		}
 	}
 
-	pub fn fold_fn<T: FolderMut>(this: &mut T, _info: Info, _name: Ident, params: &mut Vec<FnParam_>, block: &mut Block_<Expr_>) {
-		fold_fn_params(this, params);
-		this.fold_expr_block(block);
+	pub fn fold_fn<T: FolderMut>(this: &mut T, _info: Info, def: &mut FnDef) {
+		fold_fn_params(this, &mut def.params);
+		this.fold_expr_block(&mut def.block);
 	}
 
 	pub fn fold_fn_param<T: FolderMut>(this: &mut T, param: &mut FnParam_) {
@@ -164,12 +176,16 @@ pub trait FolderMut: Sized {
 		fold_mut::fold_item_block(self, block);
 	}
 
-	fn fold_data(&mut self, _info: Info, _name: Ident, block: &mut Block_<Item_>) {
+	fn fold_generics(&mut self, generics: &mut Generics) {
+	}
+
+	fn fold_data(&mut self, _info: Info, _name: Ident, generics: &mut Generics, block: &mut Block_<Item_>) {
+		self.fold_generics(generics);
 		fold_mut::fold_item_block(self, block);
 	}
 
-	fn fold_fn(&mut self, info: Info, name: Ident, params: &mut Vec<FnParam_>, block: &mut Block_<Expr_>) {
-		fold_mut::fold_fn(self, info, name, params, block);
+	fn fold_fn(&mut self, info: Info, def: &mut FnDef) {
+		fold_mut::fold_fn(self, info, def);
 	}
 
 	fn fold_fn_param(&mut self, param: &mut FnParam_) {
@@ -178,8 +194,8 @@ pub trait FolderMut: Sized {
 
 	fn fold_item(&mut self, val: &mut Item_) {
 		match val.val {
-			Item::Data(i, ref mut b) => self.fold_data(val.info, i, b),
-			Item::Fn(i, ref mut p, ref mut b) => self.fold_fn(val.info, i, p, b)
+			Item::Data(i, ref mut g, ref mut b) => self.fold_data(val.info, i, g, b),
+			Item::Fn(ref mut d) => self.fold_fn(val.info, d)
 		};
 	}
 
@@ -245,8 +261,8 @@ pub mod fold {
 
 	pub fn fold_item<'c, T: Folder<'c>>(this: &mut T, val: &'c Item_) {
 		match val.val {
-			Item::Data(i, ref b) => this.fold_data(val.info, i, b),
-			Item::Fn(i, ref p, ref b) => this.fold_fn(val.info, i, p, b)
+			Item::Data(i, ref g, ref b) => this.fold_data(val.info, i, g, b),
+			Item::Fn(ref d) => this.fold_fn(val.info, d)
 		};
 	}
 
@@ -284,9 +300,9 @@ pub mod fold {
 		}
 	}
 
-	pub fn fold_fn<'c, T: Folder<'c>>(this: &mut T, _info: Info, _name: Ident, params: &'c Vec<FnParam_>, block: &'c Block_<Expr_>) {
-		fold_fn_params(this, params);
-		this.fold_expr_block(block);
+	pub fn fold_fn<'c, T: Folder<'c>>(this: &mut T, _info: Info, def: &'c FnDef) {
+		fold_fn_params(this, &def.params);
+		this.fold_expr_block(&def.block);
 	}
 
 	pub fn fold_fn_param<'c, T: Folder<'c>>(this: &mut T, param: &'c FnParam_) {
@@ -309,12 +325,16 @@ pub trait Folder<'c>: Sized {
 		fold::fold_item_block(self, block);
 	}
 
-	fn fold_data(&mut self, _info: Info, _name: Ident, block: &'c Block_<Item_>) {
+	fn fold_generics(&mut self, generics: &'c Generics) {
+	}
+
+	fn fold_data(&mut self, _info: Info, _name: Ident, generics: &'c Generics, block: &'c Block_<Item_>) {
+		self.fold_generics(generics);
 		fold::fold_item_block(self, block);
 	}
 
-	fn fold_fn(&mut self, info: Info, name: Ident, params: &'c Vec<FnParam_>, block: &'c Block_<Expr_>) {
-		fold::fold_fn(self, info, name, params, block);
+	fn fold_fn(&mut self, info: Info, def: &'c FnDef){
+		fold::fold_fn(self, info, def);
 	}
 
 	fn fold_fn_param(&mut self, param: &'c FnParam_) {
