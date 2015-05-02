@@ -253,7 +253,7 @@ impl<'c> Parser<'c> {
 	fn span(&self, start: Span) -> Span {
 		Span {
 			start: start.start,
-			len: self.last_ended - start.start
+			len: if start.start >= self.last_ended { 0 } else { self.last_ended - start.start },
 		}
 	}
 

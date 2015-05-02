@@ -17,7 +17,6 @@ mod misc;
 mod interner;
 mod lexer;
 mod parser;
-mod declare;
 mod resolution;
 mod node_map;
 mod ty;
@@ -34,7 +33,6 @@ fn main() {
 
     let mut ast = parser::parse(&src);
 
-    declare::run(&mut ast);
     resolution::run(&src, &mut ast);
 
     let map = node_map::create(&ast);

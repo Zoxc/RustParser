@@ -124,10 +124,12 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	}
 
 	fn infer_block(&mut self, args: Args, b: &'c Block_<Expr_>) -> Ty<'c> {
-		let unused_next = args.next();
-		for e in b.val.vals[..].init().iter() {
-			self.infer(unused_next, e);
-		};
+		if !b.val.vals.is_empty() {
+			let unused_next = args.next();
+			for e in b.val.vals[..].init().iter() {
+				self.infer(unused_next, e);
+			};
+		}
 
 		match b.val.vals.last() {
 			Some(r) => self.infer(args.map(|a| a.unused = args.unused ), r),
@@ -206,6 +208,7 @@ pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<
 		node_map: node_map,
 		type_map: RefCell::new(HashMap::new()),
 		recursion_map: recursion::run(block),
+
 		ty_err: alloc_ty(&arena, Ty_::Error),
 		ty_unit: alloc_ty(&arena, Ty_::Tuple(Vec::new())),
 	};
