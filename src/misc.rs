@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use parser;
 use lexer;
+use infer;
 use lexer::Span;
 use interner::{Val, Interner};
 use ast::Id;
@@ -40,6 +41,7 @@ pub enum Msg {
 	Lexer(lexer::Msg),
 	Parser(parser::Msg),
 	Resolution(Name),
+	Infer(infer::Msg)
 }
 
 impl Msg {
@@ -47,6 +49,7 @@ impl Msg {
 		match *self {
 			Msg::Parser(ref msg) => msg.msg(src),
 			Msg::Lexer(ref msg) => msg.msg(src),
+			Msg::Infer(ref msg) => msg.msg(src),
 			Msg::Resolution(name) => format!("Unknown identifier '{}'", src.get_name(name)),
 		}
 	}

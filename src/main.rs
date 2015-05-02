@@ -1,4 +1,4 @@
-#![feature(rustc_private)]
+#![feature(rustc_private, collections)]
 
 extern crate arena;
 
@@ -39,7 +39,7 @@ fn main() {
 
     let map = node_map::create(&ast);
 
-    infer::run(&ast, &map);
+    infer::run(&src, &ast, &map);
 
 	print!("{}", src.format_msgs());
 }

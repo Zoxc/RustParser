@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use ast;
+use misc;
+use misc::Source;
 use std::rc::Rc;
+use lexer::Span;
 use std::cell::RefCell;
 use ast::{Id, Info, Ident, FnParam_, Generics, Block_, Expr_, Item, Expr, Item_, Folder, Lookup};
 use ty::{Ty, Ty_, Scheme, Var, Substs};
@@ -8,7 +11,20 @@ use node_map::NodeMap;
 use recursion;
 use arena::TypedArena;
 
+pub enum Msg {
+	Error(String),
+}
+
+impl Msg {
+	pub fn msg(&self, _src: &Source) -> String {
+		match *self {
+			Msg::Error(ref str) => str.clone(),
+		}
+	}
+}
+
 struct InferContext<'c> {
+	src: &'c Source,
 	arena: &'c TypedArena<Ty_<'c>>,
 	node_map: &'c NodeMap<'c>,
 	type_map: RefCell<HashMap<Id, Scheme<'c>>>,
@@ -55,16 +71,15 @@ impl Args {
 		}
 	}
 
-	fn map<F: FnOnce(&Self)>(&self, f: F) -> Args {
-		let next = self.next();
-		f(&next);
+	fn map<F: FnOnce(&mut Self)>(&self, f: F) -> Args {
+		let mut next = self.next();
+		f(&mut next);
 		next
 	}
 }
 
 struct InferGroup<'ctx, 'c: 'ctx> {
 	infer_vars: u32,
-	ids: Vec<Id>,
 	ctx: &'ctx InferContext<'c>,
 }
 
@@ -73,6 +88,10 @@ fn alloc_ty<'c>(arena: &'c TypedArena<Ty_<'c>>, ty: Ty_<'c>) -> Ty<'c> {
 }
 
 impl<'ctx, 'c> InferGroup<'ctx, 'c> {
+	fn error(&self, sp: Span, msg: String) {
+		self.ctx.src.msg(sp, misc::Msg::Infer(Msg::Error(msg)));
+	}
+
 	fn alloc_ty(&self, ty: Ty_<'c>) -> Ty<'c> {
 		alloc_ty(self.ctx.arena, ty)
 	}
@@ -93,7 +112,10 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	fn infer(&mut self, args: Args, e: &'c Expr_) -> Ty<'c> {
 		if args.valueness != Valueness::Right {
 			match e {
-				_ => return self.ctx.ty_err,
+				_ => {
+					self.error(e.info.span, format!("Invalid l-value"));
+					return self.ctx.ty_err;
+				}
 			}
 		}
 
@@ -116,19 +138,19 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	fn infer_item(&mut self, item: &'c Item_) -> Scheme<'c> {
 		match item.val {
 			Item::Data(i, ref g, ref b) => {
-				self.infer_generics(g, self.alloc_ty(Ty_::Ref(item.info.id, Substs(Vec::new()))))
+				let r = self.alloc_ty(Ty_::Ref(item.info.id, Substs(Vec::new())));
+				self.infer_generics(g, r)
 			}
 			Item::Fn(ref d) => {
-				let result = [];
 				let args = Args::new(item.info.id);
-				self.infer_generics(&d.generics, self.infer_block(args, &d.block))
-
+				let r = self.infer_block(args, &d.block);
+				self.infer_generics(&d.generics, r)
 			}
 		}
 	}
 
-	fn infer_group(&mut self) {
-		for id in self.ids.iter() {
+	fn infer_group(&mut self, ids: Vec<Id>) {
+		for id in ids.iter() {
 			let scheme = match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item(item),
 				Lookup::Expr(_) => panic!(),
@@ -152,10 +174,9 @@ impl<'c> InferContext<'c> {
 		let ids = self.recursion_map.get(&id).map(|r| &r[..]).unwrap_or(def).to_vec();
 		let mut group = InferGroup {
 			infer_vars: 0,
-			ids: ids,
 			ctx: self,
 		};
-		group.infer_group();
+		group.infer_group(ids);
 
 		self.infer_id(id)
 	}
@@ -177,9 +198,10 @@ impl<'ctx, 'c> Folder<'c> for InferPass<'ctx, 'c> {
 	}
 }
 
-pub fn run<'c>(block: &'c Block_<Item_>, node_map: &'c NodeMap<'c>) {
+pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<'c>) {
 	let arena = TypedArena::new();
 	let mut ctx = InferContext {
+		src: src,
 		arena: &arena,
 		node_map: node_map,
 		type_map: RefCell::new(HashMap::new()),
