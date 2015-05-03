@@ -200,7 +200,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		match *ty {
 			Ty_::Error => format!("<error>"),
 			Ty_::Int => format!("int"),
-			Ty_::Infer(i) => format!("ρ{}", i),
+			Ty_::Infer(i) => format!("λ{}", i),
 			Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
 			Ty_::Fn(ref args, ret) => if p {
 				format!("(({}) -> {})", connect!(args), self.format_ty_(ret, true))
@@ -338,6 +338,16 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 
 		match e.val {
+			Expr::Assign(op, ref lhs, ref rhs) => {
+				let mut l_args = args.next();
+				l_args.valueness = Valueness::LeftTuple;
+				self.infer(l_args, lhs, result);
+				self.infer(args.next(), rhs, result);
+			}
+			Expr::BinOp(ref lhs, op, ref rhs) => {
+				self.infer(args.next(), lhs, result);
+				self.infer(args.next(), rhs, result);
+			}
 			Expr::Ref(name, id, ref substs) => {
 				result!(self.infer_id(id, substs));
 			}
@@ -456,7 +466,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			};
 		}
 		for id in self.ids.clone().iter() {
-			let scheme = match *self.ctx.node_map.get(id).unwrap() {
+			match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item(item),
 				Lookup::Expr(_) => panic!(),
 			};
@@ -468,10 +478,6 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 }
 
 impl<'c> InferContext<'c> {
-	fn alloc_ty(&self, ty: Ty_<'c>) -> Ty<'c> {
-		self.arena.alloc(ty)
-	}
-
 	fn infer_id(&self, id: Id) -> Scheme<'c> {
 		match self.type_map.borrow().get(&id) {
 			Some(r) => return r.clone(),
@@ -498,7 +504,7 @@ struct InferPass<'ctx, 'c: 'ctx> {
 
 impl<'ctx, 'c> Folder<'c> for InferPass<'ctx, 'c> {
 	// Ignore expressions
-	fn fold_expr(&mut self, val: &'c Expr_) {
+	fn fold_expr(&mut self, _: &'c Expr_) {
 	}
 
 	fn fold_item(&mut self, val: &'c Item_) {

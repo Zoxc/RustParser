@@ -81,7 +81,7 @@ impl<'c> Parser<'c> {
 				self.lexer.span.start += 1;
 				self.lexer.span.len -= 1;
 				self.lexer.token = Token::Op(self.lexer.intern(&self.lexer.src.ctx.interners.op, self.lexer.span));
-    			self.print(&format!("SkipTok {:?}", self.lexer.token));
+    			//bself.print(&format!("SkipTok {:?}", self.lexer.token));
 					
 				}
 			}
@@ -101,6 +101,7 @@ impl<'c> Parser<'c> {
 		self.lexer.token == tok
 	}
 
+	#[allow(dead_code)]
 	fn print(&self, s: &str) {
 		println!("{}\n{}", s, self.lexer.src.format_span(self.lexer.span));
 	}
@@ -223,11 +224,7 @@ impl<'c> Parser<'c> {
 		if self.is(Token::Line) {
 			if self.lexer.indent_newline(baseline, pos) {
 				Some(noded!(self, {
-					self.print("New block");
-					
 					let r = term(self);
-
-					self.print("Done block");
 
 					if !self.is(Token::End) {
 						self.expect(Token::Deindent);

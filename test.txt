@@ -1,0 +1,13 @@
+data test
+    fn hi(a, test** b)
+        loop
+            hi[a]
+            
+        return test
+
+        break
+
+fn t(test a, b)
+    return a + b
+
+fn main()

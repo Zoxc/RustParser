@@ -1,4 +1,3 @@
-use misc::Name;
 use ast::Id;
 
 pub type Ty<'t> = &'t Ty_<'t>;
