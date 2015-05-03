@@ -1,20 +1,18 @@
 use misc::Name;
 use ast::Id;
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct Substs<'t>(pub Vec<Ty<'t>>);
-
 pub type Ty<'t> = &'t Ty_<'t>;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum Ty_<'t> {
 	Error,
 	Int,
 	Tuple(Vec<Ty<'t>>),
 	Infer(u32),
-	Param(Id),
 	Fn(Vec<Ty<'t>>, Ty<'t>),
-	Ref(Id, Substs<'t>),
+	Kind(Id),
+	Ref(Id, Vec<Ty<'t>>),
+	Proj(Id, Vec<Ty<'t>>, Id),
 	Ptr(Ty<'t>),
 }
 
@@ -24,27 +22,30 @@ impl<'t> Ty_<'t> {
 	}
 
 	pub fn occurs_in(&'t self, t: Ty<'t>) -> bool {
-		if self == t {
-			return true;
-		}
+		let s = match *self {
+			Ty_::Infer(s) => s,
+			_ => panic!(),
+		};
 
 		match *t {
-			Ty_::Error | Ty_::Int | Ty_::Param(_) | Ty_::Infer(_) => false,
+			Ty_::Infer(v) if v == s => true,
+			Ty_::Error | Ty_::Int | Ty_::Infer(_) | Ty_::Kind(_) => false,
 			Ty_::Tuple(ref vec) => self.occurs_in_list(&vec[..]),
 			Ty_::Fn(ref args, ret) => self.occurs_in_list(&args[..]) || self.occurs_in(ret),
-			Ty_::Ref(_, ref substs) => self.occurs_in_list(&substs.0[..]),
+			Ty_::Ref(_, ref substs) => self.occurs_in_list(&substs[..]),
+			Ty_::Proj(_, ref substs, _) => self.occurs_in_list(&substs[..]),
 			Ty_::Ptr(p) => self.occurs_in(p),
 		}
 	}
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct TyParam<'t> {
-	pub name: Name,
-	pub hm: Ty<'t>,
+	pub id: Id,
+	pub scheme: Scheme<'t>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Scheme<'t> {
 	pub ty: Ty<'t>,
 	pub params: Vec<TyParam<'t>>,

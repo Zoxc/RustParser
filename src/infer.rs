@@ -6,7 +6,7 @@ use std::rc::Rc;
 use lexer::Span;
 use std::cell::RefCell;
 use ast::{Id, Info, Ident, FnParam_, Generics, Block_, Expr_, Item, Expr, Item_, Folder, Lookup};
-use ty::{Ty, Ty_, Scheme, Substs};
+use ty::{Ty, Ty_, Scheme};
 use node_map::NodeMap;
 use recursion;
 use arena::TypedArena;
@@ -84,7 +84,7 @@ impl Args {
 struct InferGroup<'ctx, 'c: 'ctx> {
 	infer_vars: RefCell<Vec<Ty<'c>>>,
 	ids: Vec<Id>,
-	tys: HashMap<Id, Ty<'c>>,
+	tys: HashMap<Id, Scheme<'c>>,
 	ctx: &'ctx InferContext<'c>,
 }
 
@@ -111,6 +111,82 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		self.infer_vars.borrow_mut().push(t);
 		t
 	}
+/*
+	fn ty_eq(&self, mut a: Ty<'c>, mut b: Ty<'c>) -> bool {
+		a = self.prune(a);
+		b = self.prune(b);
+
+		macro_rules! arg_match {
+		    ($la:expr, $ra:expr) => {{
+		    	let l_args = &$la[..];
+		    	let r_args = &$ra[..];
+				if l_args.len() != r_args.len() {
+					false
+				} else {
+					l_args.iter().zip(r_args.iter()).all(|(l, r)| { self.ty_eq(l, r) })
+				}
+		    }}
+		}
+
+		match (a, b) {
+			(&Ty_::Error, _) => true,
+			(_, &Ty_::Error) => true,
+
+			(&Ty_::Infer(a), &Ty_::Infer(b)) => a == b,
+
+			(&Ty_::Int, &Ty_::Int) => true,
+			(&Ty_::Tuple(ref la), &Ty_::Tuple(ref ra)) => arg_match!(la, ra),
+			(&Ty_::Kind(a), &Ty_::Kind(b)) =>  a == b,
+			(&Ty_::Ref(a, ref la), &Ty_::Ref(b, ref ra)) => a == b && arg_match!(la, ra),
+			(&Ty_::Proj(a, ref la, ls), &Ty_::Proj(b, ref ra, rs)) => a == b && ls == rs && arg_match!(la, ra),
+			(&Ty_::Fn(ref la, lr), &Ty_::Fn(ref ra, rr)) => self.ty_eq(lr, rr) && arg_match!(la, ra),
+			(&Ty_::Ptr(lp), &Ty_::Ptr(rp)) => self.ty_eq(lp, rp),
+			_ => false,
+		}
+	}
+*/
+	fn inst_ty<P: Fn(Id) -> Option<Ty<'c>>>(&self, mut ty: Ty<'c>, param: &P) -> Ty<'c> {
+		macro_rules! map {
+		    ($t:expr) => {self.inst_ty($t, param)}
+		}
+
+		macro_rules! map_vec {
+		    ($vec:expr) => {$vec.iter().map(|t| map!(t)).collect()}
+		}
+
+		ty = self.prune(ty);
+
+		match *ty {
+			Ty_::Error | Ty_::Int | Ty_::Infer(_)  => ty,
+			Ty_::Tuple(ref vec) => self.alloc_ty(Ty_::Tuple(map_vec!(vec))),
+			Ty_::Fn(ref args, ret) => self.alloc_ty(Ty_::Fn(map_vec!(args), map!(ret))),
+			Ty_::Kind(id) => {
+				match param(id) {
+					Some(r) => r,
+					None => ty,
+				}
+			}
+			Ty_::Ref(id, ref substs) => {
+				match param(id) {
+					Some(r) => {
+						match *r {
+							Ty_::Kind(id) => {
+								debug_assert!(!substs.is_empty());
+								self.alloc_ty(Ty_::Ref(id, map_vec!(substs)))
+							}
+							_ => {
+								debug_assert!(substs.is_empty());
+								r
+							}
+						} 
+					}
+					None => self.alloc_ty(Ty_::Ref(id, map_vec!(substs))),
+				}
+			}
+			Ty_::Proj(id, ref substs, sub) => self.alloc_ty(Ty_::Proj(id, map_vec!(substs), sub)),
+			Ty_::Ptr(p) => self.alloc_ty(Ty_::Ptr(map!(p))),
+		}
+	}
 
 	fn format_ty_(&self, mut ty: Ty<'c>, p: bool) -> String {
 		macro_rules! connect {
@@ -123,7 +199,6 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		ty = self.prune(ty);
 		match *ty {
 			Ty_::Error => format!("<error>"),
-			Ty_::Param(_) => format!("<Param>"),
 			Ty_::Int => format!("int"),
 			Ty_::Infer(i) => format!("ρ{}", i),
 			Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
@@ -132,7 +207,9 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			} else {
 				format!("({}) -> {}", connect!(args), self.format_ty_(ret, true))
 			},
-			Ty_::Ref(_, ref substs) => format!("ref[{}]", connect!(substs.0)),
+			Ty_::Kind(_) => format!("kind"),
+			Ty_::Ref(_, ref substs) => format!("ref[{}]", connect!(substs)),
+			Ty_::Proj(_, ref substs, _) => format!("proj[{}]", connect!(substs)),
 			Ty_::Ptr(p) => format!("{}*", self.format_ty(p)),
 		}
 	}
@@ -189,11 +266,8 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			(&Ty_::Error, _) => return,
 			(_, &Ty_::Error) => return,
 
+			(&Ty_::Infer(a), &Ty_::Infer(b)) if a == b => return, // TODO: Can this happen?
 			(&Ty_::Infer(v), _) => {
-				if l == r { // TODO: Can this happen?
-					return;
-				}
-
 				if l.occurs_in(r) {
 					self.error(sp, format!("Type {} occurs in type {} during unification", self.format_ty(l), self.format_ty(r)));
 					return;
@@ -204,10 +278,11 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			}
 			(_, &Ty_::Infer(v)) => return self.unify(sp, r, l),
 
-			(&Ty_::Param(a), &Ty_::Param(b)) => a == b,
 			(&Ty_::Int, &Ty_::Int) => true,
 			(&Ty_::Tuple(ref la), &Ty_::Tuple(ref ra)) => arg_match!(la, ra),
-			(&Ty_::Ref(a, ref la), &Ty_::Ref(b, ref ra)) => a == b && arg_match!(la.0, ra.0),
+			(&Ty_::Kind(a), &Ty_::Kind(b)) => a == b,
+			(&Ty_::Ref(a, ref la), &Ty_::Ref(b, ref ra)) => a == b && arg_match!(la, ra),
+			(&Ty_::Proj(a, ref la, ls), &Ty_::Proj(b, ref ra, rs)) => a == b && ls == rs && arg_match!(la, ra),
 			(&Ty_::Fn(ref la, lr), &Ty_::Fn(ref ra, rr)) => {
 				self.unify(sp, lr, rr);
 				arg_match!(la, ra)
@@ -238,11 +313,17 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 	fn infer(&mut self, args: Args, e: &'c Expr_, result: Ty<'c>) {
 		macro_rules! error {
-		    ($($e:expr),*) => {self.error(e.info.span, format!($($e),*))}
+		    ($($e:expr),*) => {{
+		    	let m = format!($($e),*);
+		    	self.error(e.info.span, m)
+		    }}
 		}
 
 		macro_rules! result {
-		    ($t:expr) => {self.unify(e.info.span, result, $t)}
+		    ($t:expr) => {{
+		    	let t = $t;
+		    	self.unify(e.info.span, result, t)
+		    }}
 		}
 
 				self.print(e.info.span, "item");
@@ -257,11 +338,11 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 
 		match e.val {
-			Expr::Ref(id, ref ret, ref substs) => {
-				result!(self.ctx.ty_int);
+			Expr::Ref(name, id, ref substs) => {
+				result!(self.infer_id(id, substs));
 			}
 			Expr::Return(ref ret) => {
-				let r = match **self.tys.get(&args.node).unwrap() {
+				let r = match *self.tys.get(&args.node).unwrap().ty {
 					Ty_::Fn(_, r) => r,
 					_ => {
 						error!("Return outside a function");
@@ -303,14 +384,41 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 	}
 
-	fn infer_item(&mut self, item: &'c Item_) -> Scheme<'c> {
-		match item.val {
+	fn infer_id(&mut self, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Ty<'c> {
+		let scheme = match self.tys.get(&id) {
+			Some(t) => t.clone(),
+			None => {
+				self.ctx.infer_id(id)
+			}
+		};
+
+		let mut param_map = HashMap::new();
+
+		match *substs {
+			Some(ref substs) => {
+				for (sub, param) in substs.iter().zip(scheme.params.iter()) {
+					param_map.insert(param.id, self.infer_ty(sub));
+				}
+			}
+			None => {
+				for param in scheme.params {
+					param_map.insert(param.id, self.new_var());
+				}
+			}
+		}
+
+		let param = |id| param_map.get(&id).map(|t| *t);
+
+		self.inst_ty(scheme.ty, &param)
+	}
+
+	fn infer_item_shallow(&mut self, item: &'c Item_) {
+		let scheme = match item.val {
 			Item::Data(i, ref g, _) => {
-				let r = self.alloc_ty(Ty_::Ref(item.info.id, Substs(Vec::new())));
+				let r = self.alloc_ty(Ty_::Ref(item.info.id, Vec::new()));
 				self.infer_generics(g, r)
 			}
 			Item::Fn(ref d) => {
-				let args = Args::new(item.info.id);
 				let ty_args = d.params.iter().map(|p| self.infer_ty(&p.val.1)).collect();
 				let returns = if d.returns.val == ast::Ty::Infer {
 					if detect_return::run(&d.block) {
@@ -322,23 +430,39 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 					self.infer_ty(&d.returns)
 				};
 				let ty = self.alloc_ty(Ty_::Fn(ty_args, returns));
-				self.tys.insert(item.info.id, ty);
 				self.print(item.info.span, &format!("fn {} of type {}", self.ctx.src.get_name(d.name.0.val), self.format_ty(ty)));
+				self.infer_generics(&d.generics, ty)
+			}
+		};
+		self.tys.insert(item.info.id, scheme);
+	}
+
+	fn infer_item(&mut self, item: &'c Item_) {
+		match item.val {
+			Item::Fn(ref d) => {
+				let args = Args::new(item.info.id);
 				let t = self.new_var();
 				self.infer_block(args, &d.block, t);
-				let t = self.new_var();
-				self.infer_generics(&d.generics, t)
 			}
+			_ => ()
 		}
 	}
 
 	fn infer_group(&mut self) {
 		for id in self.ids.clone().iter() {
+			match *self.ctx.node_map.get(id).unwrap() {
+				Lookup::Item(item) => self.infer_item_shallow(item),
+				Lookup::Expr(_) => panic!(),
+			};
+		}
+		for id in self.ids.clone().iter() {
 			let scheme = match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item(item),
 				Lookup::Expr(_) => panic!(),
 			};
-			self.ctx.type_map.borrow_mut().insert(*id, scheme);
+		}
+		for (k, v) in self.tys.drain() {
+			self.ctx.type_map.borrow_mut().insert(k, v);
 		}
 	}
 }
