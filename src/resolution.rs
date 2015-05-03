@@ -62,11 +62,11 @@ impl<'c> ResolutionPass<'c> {
 			Ty::Infer => (),
 			Ty::Error => (),
 			Ty::Ptr(ref mut t) => self.ty(t), 
-			Ty::Ref(ident, ref mut id) => self.fold_ref(ident, id),
+			Ty::Ref(ident, ref mut id, ref mut s) => self.fold_ref(ident, id, s),
 		};
 	}
 
-	fn fold_ref(&mut self, ident: Ident, id: &mut Id) {
+	fn fold_ref(&mut self, ident: Ident, id: &mut Id, s: &mut Option<Vec<Ty_>>) {
 		if self.declare {
 			return;
 		}
@@ -75,13 +75,15 @@ impl<'c> ResolutionPass<'c> {
 			Some(node) => *id = node,
 			None => self.src.msg(ident.0.span, Msg::Resolution(ident.0.val)),
 		}
+
+		s.as_mut().map(|v| v.iter_mut().map(|t| self.ty(t)));
 	}
 
 	fn expr(&mut self, val: &mut Expr_) {
 		match val.val {
 			Expr::Break => (),
 			Expr::Error => (),
-			Expr::Ref(ident, ref mut id) => self.fold_ref(ident, id),
+			Expr::Ref(ident, ref mut id, ref mut s) => self.fold_ref(ident, id, s),
 			Expr::If(ref mut cond, ref mut then, ref mut otherwise) => {
 				self.expr(cond);
 				self.expr_block(then);
@@ -100,7 +102,7 @@ impl<'c> ResolutionPass<'c> {
 				self.expr(lhs);
 				self.expr(rhs);
 			} 
-			Expr::Return(ref mut ret) => self.expr(ret),
+			Expr::Return(ref mut ret) => {ret.as_mut().map(|e| self.expr(e));},
 			Expr::Block(ref mut b) => self.expr_block(b),
 			Expr::Loop(ref mut b) => self.expr_block(b),
 		};

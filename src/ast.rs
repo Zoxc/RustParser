@@ -104,7 +104,7 @@ pub enum Ty {
 	Error,
 	Infer,
 	Ptr(Box<Ty_>),
-	Ref(Ident, Id),
+	Ref(Ident, Id, Option<Vec<Ty_>>),
 }
 
 pub type Expr_ = N<Expr>;
@@ -116,11 +116,11 @@ pub enum Expr {
 	BinOp(Box<N<Expr>>, Op, Box<N<Expr>>),
 	UnaryOp(Op, Box<N<Expr>>),
 	If(Box<N<Expr>>, Block_<N<Expr>>, Option<Box<N<Expr>>>),
-	Return(Box<N<Expr>>),
+	Return(Option<Box<N<Expr>>>),
 	Block(Block_<N<Expr>>),
 	Loop(Block_<Expr_>),
 	Break,
-	Ref(Ident, Id),
+	Ref(Ident, Id, Option<Vec<Ty_>>),
 }
 
 pub enum Lookup<'c> {
@@ -152,11 +152,18 @@ pub mod fold {
 		};
 	}
 
+	pub fn fold_ty_substs<'c, T: Folder<'c>>(this: &mut T, val: &'c Option<Vec<Ty_>>) {
+		val.as_ref().map(|t| t.iter().map(|t| this.fold_ty(t)));
+	}
+
 	pub fn fold_expr<'c, T: Folder<'c>>(this: &mut T, val: &'c Expr_) {
 		match val.val {
 			Expr::Break => (),
 			Expr::Error => (),
-			Expr::Ref(ident, id) => this.fold_ref(ident, id),
+			Expr::Ref(ident, id, ref substs) => {
+				this.fold_ref(ident, id);
+				fold_ty_substs(this, substs);
+			}
 			Expr::If(ref cond, ref then, ref otherwise) => {
 				this.fold_expr(cond);
 				this.fold_expr_block(then);
@@ -175,7 +182,7 @@ pub mod fold {
 				this.fold_expr(lhs);
 				this.fold_expr(rhs);
 			} 
-			Expr::Return(ref ret) => this.fold_expr(ret),
+			Expr::Return(ref ret) => {ret.as_ref().map(|m| this.fold_expr(&m));},
 			Expr::Block(ref b) => this.fold_expr_block(b),
 			Expr::Loop(ref b) => this.fold_expr_block(b),
 		};
@@ -236,7 +243,10 @@ pub trait Folder<'c>: Sized {
 			Ty::Infer => (),
 			Ty::Error => (),
 			Ty::Ptr(ref t) => self.fold_ty(t), 
-			Ty::Ref(ident, id) => self.fold_ref(ident, id),
+			Ty::Ref(ident, id, ref substs) => {
+				self.fold_ref(ident, id);
+				fold::fold_ty_substs(self, substs);
+			},
 		};
 	}
 

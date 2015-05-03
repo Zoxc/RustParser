@@ -15,6 +15,7 @@ pub enum Ty_<'t> {
 	Param(Id),
 	Fn(Vec<Ty<'t>>, Ty<'t>),
 	Ref(Id, Substs<'t>),
+	Ptr(Ty<'t>),
 }
 
 impl<'t> Ty_<'t> {
@@ -32,6 +33,7 @@ impl<'t> Ty_<'t> {
 			Ty_::Tuple(ref vec) => self.occurs_in_list(&vec[..]),
 			Ty_::Fn(ref args, ret) => self.occurs_in_list(&args[..]) || self.occurs_in(ret),
 			Ty_::Ref(_, ref substs) => self.occurs_in_list(&substs.0[..]),
+			Ty_::Ptr(p) => self.occurs_in(p),
 		}
 	}
 }

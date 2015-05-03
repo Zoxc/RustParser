@@ -149,7 +149,6 @@ impl<'c> Parser<'c> {
 	fn step(&mut self) {
 		self.last_ended = self.lexer.span.start + self.lexer.span.len;
 		self.lexer.next_token();
-    	self.print(&format!("Tok {:?}", self.lexer.token));
 	}
 
 	fn skip(&mut self, tok: Token) {
@@ -190,8 +189,6 @@ impl<'c> Parser<'c> {
 	}
 
 	pub fn parse(&mut self) -> Block_<Item_> {
-		self.print(&format!("Tok {:?}", self.lexer.token));
-
 		let ast = noded!(self, { self.items() });
 
 		println!("AST! {}", print::item_block(self.lexer.src, &ast));
@@ -317,7 +314,7 @@ impl<'c> Parser<'c> {
 			}
 			_ => {
 				match ty.val {
-					Ty::Ref(ident, _) => {
+					Ty::Ref(ident, _, None) => {
 						(ident, noded!(self, Ty::Infer))
 					}
 					_ => {
@@ -326,6 +323,13 @@ impl<'c> Parser<'c> {
 					}
 				}
 			}
+		}
+	}
+
+	fn is_ty(&self) -> bool {
+		match self.tok() {
+			Token::Bracket(_, true) | Token::Name(_) => true,
+			_ => false
 		}
 	}
 
@@ -348,7 +352,9 @@ impl<'c> Parser<'c> {
 		noded!(self, {
 			match self.tok() {
 				Token::Name(_) => {
-					Ty::Ref(self.ident(), NONE)
+					let name = self.ident();
+					let substs = self.ty_args();
+					Ty::Ref(name, NONE, substs)
 				}
 				_ => {
 					self.expected("type");
@@ -356,6 +362,22 @@ impl<'c> Parser<'c> {
 				}
 			}
 		})
+	}
+
+	fn ty_args(&mut self) -> Option<Vec<Ty_>> {
+		if self.tok() == Token::Bracket(Bracket::Square, true) {
+			self.bracket(Bracket::Square, |parser| {
+				parser.seq(Token::Bracket(Bracket::Square, false), |parser| {
+					if parser.is_ty() {
+						Some(parser.ty())
+					} else {
+						None
+					}
+				})
+			})
+		} else {
+			None
+		}
 	}
 
 	fn try_expr(&mut self) -> Option<Expr_> {
@@ -368,7 +390,7 @@ impl<'c> Parser<'c> {
 
 	fn is_expr(&self) -> bool {
 		match self.tok() {
-			Token::Name(_) => true,
+			Token::Bracket(_, true) | Token::Name(_) => true,
 			_ => false
 		}
 	}
@@ -392,7 +414,11 @@ impl<'c> Parser<'c> {
 			Token::Name(KW_RETURN) => {
 				noded!(self, {
 					self.step();
-					Expr::Return(Box::new(self.expr()))
+					Expr::Return(if self.is_expr() {
+						Some(Box::new(self.expr()))
+					} else {
+						None
+					})
 				})
 			}
 			_ => self.assign_operator()
@@ -469,7 +495,9 @@ impl<'c> Parser<'c> {
 		noded!(self, {
 			match self.tok() {
 				Token::Name(_) => {
-					Expr::Ref(self.ident(), NONE)
+					let name = self.ident();
+					let substs = self.ty_args();
+					Expr::Ref(name, NONE, substs)
 				}
 				_ => {
 					self.expected("expression");

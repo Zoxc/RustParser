@@ -34,6 +34,11 @@ fn main() {
 
     let mut ast = parser::parse(&src);
 
+    if src.has_msgs() {
+        print!("{}", src.format_msgs());
+        return;
+    }
+
     resolution::run(&src, &mut ast);
 
     let map = node_map::create(&ast);

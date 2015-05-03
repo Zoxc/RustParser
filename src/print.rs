@@ -26,13 +26,23 @@ fn generics(_src: &Source, _generics: &Generics) -> String {
 	"[]".to_string()
 }
 
+fn substs(src: &Source, s: &Option<Vec<Ty_>>) -> String {
+	match *s {
+		Some(ref v) => {
+			let p = v.iter().map(|t| ty(src, t)).collect::<Vec<String>>().connect(", ");
+			format!("[{}]", p)
+		}
+		None => "".to_string()
+	}
+}
+
 pub fn item_block(src: &Source, block: &Block_<Item_>) -> String {
 	do_block(src, block, item)
 }
 
 fn expr(src: &Source, e: &Expr_) -> String {
 	match e.val {
-		Expr::Ref(i, _) => ident(src, i),
+		Expr::Ref(i, _, ref s) => format!("{}{}", ident(src, i), substs(src, s)),
 		Expr::If(ref cond, ref then, ref otherwise) => {
 			let mut r = format!("if ({}){}", expr(src, cond), block(src, then));
 			if let Some(ref v) = *otherwise {
@@ -43,7 +53,10 @@ fn expr(src: &Source, e: &Expr_) -> String {
 		Expr::Assign(op, ref lhs, ref rhs) => format!("({} {} {})", expr(src, lhs), src.get_op(op), expr(src, rhs)),
 		Expr::BinOp(ref lhs, op, ref rhs) => format!("({} {} {})", expr(src, lhs), src.get_op(op), expr(src, rhs)),
 		Expr::UnaryOp(op, ref e) => format!("({}{})", src.get_op(op), expr(src, e)),
-		Expr::Return(ref ret) => format!("return ({})", expr(src, ret)),
+		Expr::Return(ref ret) => match *ret {
+			Some(ref e) => format!("return ({})", expr(src, &e)),
+			None => format!("return")
+		},
 		Expr::Loop(ref b) => format!("loop{}", block(src, b)),
 		Expr::Break => format!("break"),
 		Expr::Block(ref b) => block(src, b),
@@ -56,7 +69,7 @@ fn ty(src: &Source, t: &Ty_) -> String {
 		Ty::Error => format!("<error>"),
 		Ty::Ptr(ref t) => format!("{}*", ty(src, t)),
 		Ty::Infer => "_".to_string(),
-		Ty::Ref(i, _) => ident(src, i),
+		Ty::Ref(i, _, ref s) => format!("{}{}", ident(src, i), substs(src, s)),
 	}
 }
 

@@ -239,15 +239,19 @@ impl Source {
 	pub fn format_span(&self, s: Span) -> String {
 		let (line_nr, start) = self.line_info(s);
 		let end = self.line_end(start);
-		let line = std::str::from_utf8(&self.src.as_bytes()[start..end]).unwrap();
+		let line = &self.src[start..end];
 		let pos = format!("{}:{}: ", self.filename, line_nr);
 		let space = std::iter::repeat(" ").take(s.start as usize - start as usize + pos.len()).collect::<String>();
 		let cursor = if s.len > 1 {
-			std::iter::repeat("~").take(s.len as usize).collect::<String>()
+			std::iter::repeat("~").take(std::cmp::min(s.len as usize, end - s.start as usize)).collect::<String>()
 		} else {
 			"^".to_string()
 		};
 		format!("{}{}\n{}{}\n", pos, line, space, cursor)
+	}
+
+	pub fn has_msgs(&self) -> bool {
+		!self.msgs.borrow().is_empty()
 	}
 
 	pub fn format_msgs(&self) -> String {
