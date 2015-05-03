@@ -24,7 +24,7 @@ impl<'c> ResolutionPass<'c> {
 		}
 	}
 
-	fn generics(&mut self, _: &mut Generics) {
+	fn generics(&mut self, _generics: &mut Generics) {
 
 	}
 

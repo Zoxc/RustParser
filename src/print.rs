@@ -22,7 +22,7 @@ fn block(src: &Source, block: &Block_<Expr_>) -> String {
 	do_block(src, block, expr)
 }
 
-fn generics(src: &Source, generics: &Generics) -> String {
+fn generics(_src: &Source, _generics: &Generics) -> String {
 	"[]".to_string()
 }
 

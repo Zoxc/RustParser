@@ -20,6 +20,7 @@ mod parser;
 mod resolution;
 mod node_map;
 mod ty;
+mod detect_return;
 mod infer;
 mod recursion;
 

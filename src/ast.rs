@@ -99,7 +99,7 @@ pub enum Item {
 
 pub type Ty_ = N<Ty>;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum Ty {
 	Error,
 	Infer,
@@ -211,7 +211,7 @@ pub trait Folder<'c>: Sized {
 		fold::fold_item_block(self, block);
 	}
 
-	fn fold_generics(&mut self, generics: &'c Generics) {
+	fn fold_generics(&mut self, _generics: &'c Generics) {
 	}
 
 	fn fold_data(&mut self, _info: Info, _name: Ident, generics: &'c Generics, block: &'c Block_<Item_>) {

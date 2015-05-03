@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use ast;
 use ast::*;
 use std::rc::Rc;
-use node_map::NodeMap;
 
 struct RecursionPass {
 	stack: Vec<Id>,
@@ -10,7 +9,7 @@ struct RecursionPass {
 }
 
 impl<'c> Folder<'c> for RecursionPass {
-	fn fold_ref(&mut self, ident: Ident, id: Id) {
+	fn fold_ref(&mut self, _: Ident, id: Id) {
 		match self.stack.iter().rposition(|i| *i == id) {
 			Some(i) => {
 				let refs = Rc::new(self.stack[i..].to_vec());
