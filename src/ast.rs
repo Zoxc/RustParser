@@ -1,5 +1,5 @@
 use lexer::{Span, Spanned};
-use misc::{Name, Op, Source};
+use misc::{Name, Num, Op, Source};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -112,6 +112,7 @@ pub type Expr_ = N<Expr>;
 #[derive(Clone)]
 pub enum Expr {
 	Error,
+	Num(Num),
 	Assign(Op, Box<N<Expr>>, Box<N<Expr>>),
 	BinOp(Box<N<Expr>>, Op, Box<N<Expr>>),
 	UnaryOp(Op, Box<N<Expr>>),
@@ -159,8 +160,7 @@ pub mod fold {
 
 	pub fn fold_expr<'c, T: Folder<'c>>(this: &mut T, val: &'c Expr_) {
 		match val.val {
-			Expr::Break => (),
-			Expr::Error => (),
+			Expr::Break | Expr::Error | Expr::Num(_) => (),
 			Expr::Ref(ident, id, ref substs) => {
 				this.fold_ref(ident, id);
 				fold_ty_substs(this, substs);

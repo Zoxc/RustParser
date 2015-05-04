@@ -42,6 +42,7 @@ pub fn item_block(src: &Source, block: &Block_<Item_>) -> String {
 
 fn expr(src: &Source, e: &Expr_) -> String {
 	match e.val {
+		Expr::Num(n) => src.get_num(n),
 		Expr::Ref(i, _, ref s) => format!("{}{}", ident(src, i), substs(src, s)),
 		Expr::If(ref cond, ref then, ref otherwise) => {
 			let mut r = format!("if ({}){}", expr(src, cond), block(src, then));

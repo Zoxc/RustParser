@@ -38,6 +38,12 @@ impl<'t> Ty_<'t> {
 	}
 }
 
+pub enum Level<'t> {
+	Value(Ty<'t>),
+	Type(Ty<'t>),
+	Kind(Ty<'t>),
+}
+
 #[derive(Clone)]
 pub struct TyParam<'t> {
 	pub id: Id,
@@ -47,6 +53,7 @@ pub struct TyParam<'t> {
 #[derive(Clone)]
 pub struct Scheme<'t> {
 	pub ty: Ty<'t>,
+	pub value: bool,
 	pub params: Vec<TyParam<'t>>,
 
 }
@@ -55,6 +62,7 @@ impl<'t> Scheme<'t> {
 	pub fn plain(ty: Ty<'t>) -> Scheme<'t> {
 		Scheme {
 			ty: ty,
+			value: true,
 			params: Vec::new(),
 		}
 	}

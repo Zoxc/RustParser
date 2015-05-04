@@ -32,6 +32,8 @@ fn main() {
 
 	let src = Source::new(Rc::new(Context::new()), "input".to_string(), &data[..]);
 
+    println!("parsing...");
+
     let mut ast = parser::parse(&src);
 
     if src.has_msgs() {
@@ -43,6 +45,8 @@ fn main() {
 
     let map = node_map::create(&ast);
 
+    println!("inferring...");
+    
     infer::run(&src, &ast, &map);
 
 	print!("{}", src.format_msgs());

@@ -1,13 +1,21 @@
 data test
     fn hi(a, test** b)
         loop
-            hi[a]
+            hi
             
-        return test
-
-        break
+        return b
 
 fn t(test a, b)
     return a + b
 
 fn main()
+
+fn t1[A](A n, c)
+    return 1
+    tr(7)
+
+fn t[T](T a, d)
+    t1(a, d)
+
+fn tr(b)
+    t(3, b)

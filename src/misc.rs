@@ -177,6 +177,10 @@ impl Source {
 		self.ctx.interners.name.get(n).to_string()
 	}
 
+	pub fn get_num(&self, n: Num) -> String {
+		self.ctx.interners.num.get(n).to_string()
+	}
+
 	pub fn get_op(&self, o: Op) -> String {
 		self.ctx.interners.op.get(o).to_string()
 	}

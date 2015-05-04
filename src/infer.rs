@@ -6,7 +6,7 @@ use std::rc::Rc;
 use lexer::Span;
 use std::cell::RefCell;
 use ast::{Id, Info, Ident, FnParam_, Generics, Block_, Expr_, Item, Expr, Item_, Folder, Lookup};
-use ty::{Ty, Ty_, Scheme};
+use ty::{Ty, Ty_, Scheme, Level};
 use node_map::NodeMap;
 use recursion;
 use arena::TypedArena;
@@ -93,6 +93,18 @@ fn alloc_ty<'c>(arena: &'c TypedArena<Ty_<'c>>, ty: Ty_<'c>) -> Ty<'c> {
 }
 
 impl<'ctx, 'c> InferGroup<'ctx, 'c> {
+	fn name(&self, id: Id) -> String {
+		let ident = match *self.ctx.node_map.get(&id).unwrap() {
+			Lookup::Item(item) => match item.val {
+				Item::Fn(ref d) => d.name,
+				Item::Data(name, _, _) => name,
+			},
+			Lookup::FnParam(p) => p.val.0,
+			_ => panic!(),
+		};
+		self.ctx.src.get_name(ident.0.val)
+	}
+
 	fn error(&self, sp: Span, msg: String) {
 		self.ctx.src.msg(sp, misc::Msg::Infer(Msg::Error(msg)));
 	}
@@ -218,9 +230,10 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		self.format_ty_(ty, false)
 	}
 
-	fn infer_generics(&mut self, _generics: &'c Generics, ty: Ty<'c>) -> Scheme<'c> {
+	fn infer_generics(&mut self, _generics: &'c Generics, value: bool, ty: Ty<'c>) -> Scheme<'c> {
 		Scheme {
 			ty: ty,
+			value: value,
 			params: Vec::new(),
 		}
 	}
@@ -302,7 +315,15 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	fn infer_ty(&mut self, ty: &'c ast::Ty_) -> Ty<'c> {
 		match ty.val {
 			ast::Ty::Infer => self.new_var(),
-			ast::Ty::Ref(_,_,_) => self.ctx.ty_int, // TODO: FIX
+			ast::Ty::Ref(_, id, ref substs) => {
+				match self.infer_id(ty.info.span, id, substs) {
+					Level::Type(v) => v,
+					_ => {
+						self.error(ty.info.span, format!("Expected a type"));
+						self.ctx.ty_err
+					}
+				}
+			}
 			ast::Ty::Ptr(ref p) => {
 				let t = self.infer_ty(p);
 				self.alloc_ty(Ty_::Ptr(t))
@@ -326,7 +347,6 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		    }}
 		}
 
-				self.print(e.info.span, "item");
 		if args.valueness != Valueness::Right {
 			match e.val {
 				_ => {
@@ -338,6 +358,13 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 
 		match e.val {
+			Expr::Loop(ref b) => {
+				let mut args = args.next();
+				args.loop_node = Some(e.info.id);
+				let v = self.new_var();
+				self.infer_block(args, b, v);
+				result!(self.ctx.ty_unit);
+			}
 			Expr::Assign(op, ref lhs, ref rhs) => {
 				let mut l_args = args.next();
 				l_args.valueness = Valueness::LeftTuple;
@@ -349,7 +376,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				self.infer(args.next(), rhs, result);
 			}
 			Expr::Ref(name, id, ref substs) => {
-				result!(self.infer_id(id, substs));
+				result!(self.infer_value(e.info.span, id, substs));
 			}
 			Expr::Return(ref ret) => {
 				let r = match *self.tys.get(&args.node).unwrap().ty {
@@ -377,6 +404,8 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				result!(self.ctx.ty_err);
 			}
 		}
+
+		self.print(e.info.span, &format!("item of type {}", self.format_ty(result)));
 	}
 
 	fn infer_block(&mut self, args: Args, b: &'c Block_<Expr_>, result: Ty<'c>) {
@@ -394,7 +423,17 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 	}
 
-	fn infer_id(&mut self, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Ty<'c> {
+	fn infer_value(&mut self, sp: Span, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Ty<'c> {
+		match self.infer_id(sp, id, substs) {
+			Level::Value(v) => v,
+			_ => {
+				self.error(sp, format!("Expected a value"));
+				self.ctx.ty_err
+			}
+		}
+	}
+
+	fn infer_id(&mut self, sp: Span, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Level<'c> {
 		let scheme = match self.tys.get(&id) {
 			Some(t) => t.clone(),
 			None => {
@@ -402,10 +441,20 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			}
 		};
 
+		let err = if scheme.value {
+			Level::Value(self.ctx.ty_err)
+		} else {
+			Level::Type(self.ctx.ty_err)
+		};
+
 		let mut param_map = HashMap::new();
 
 		match *substs {
 			Some(ref substs) => {
+				if substs.len() != scheme.params.len() {
+					self.error(sp, format!("{} has {} type parameters, but {} was given", self.name(id), scheme.params.len(), substs.len()));
+					return err;
+				}
 				for (sub, param) in substs.iter().zip(scheme.params.iter()) {
 					param_map.insert(param.id, self.infer_ty(sub));
 				}
@@ -419,14 +468,20 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 		let param = |id| param_map.get(&id).map(|t| *t);
 
-		self.inst_ty(scheme.ty, &param)
+		let ty = self.inst_ty(scheme.ty, &param);
+
+		if scheme.value {
+			Level::Value(ty)
+		} else {
+			Level::Type(ty)
+		}
 	}
 
 	fn infer_item_shallow(&mut self, item: &'c Item_) {
 		let scheme = match item.val {
 			Item::Data(i, ref g, _) => {
 				let r = self.alloc_ty(Ty_::Ref(item.info.id, Vec::new()));
-				self.infer_generics(g, r)
+				self.infer_generics(g, false, r)
 			}
 			Item::Fn(ref d) => {
 				let ty_args = d.params.iter().map(|p| {
@@ -444,19 +499,21 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 					self.infer_ty(&d.returns)
 				};
 				let ty = self.alloc_ty(Ty_::Fn(ty_args, returns));
-				self.print(item.info.span, &format!("fn {} of type {}", self.ctx.src.get_name(d.name.0.val), self.format_ty(ty)));
-				self.infer_generics(&d.generics, ty)
+				self.infer_generics(&d.generics, true, ty)
 			}
 		};
 		self.tys.insert(item.info.id, scheme);
 	}
 
 	fn infer_item(&mut self, item: &'c Item_) {
+		let ty = self.tys.get(&item.info.id).unwrap().ty;
+
 		match item.val {
 			Item::Fn(ref d) => {
 				let args = Args::new(item.info.id);
 				let t = self.new_var();
 				self.infer_block(args, &d.block, t);
+				self.print(item.info.span, &format!("fn {} :: {}", self.ctx.src.get_name(d.name.0.val), self.format_ty(ty)));
 			}
 			_ => ()
 		}

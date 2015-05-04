@@ -81,8 +81,7 @@ impl<'c> ResolutionPass<'c> {
 
 	fn expr(&mut self, val: &mut Expr_) {
 		match val.val {
-			Expr::Break => (),
-			Expr::Error => (),
+			Expr::Break | Expr::Error | Expr::Num(_) => (),
 			Expr::Ref(ident, ref mut id, ref mut s) => self.fold_ref(ident, id, s),
 			Expr::If(ref mut cond, ref mut then, ref mut otherwise) => {
 				self.expr(cond);

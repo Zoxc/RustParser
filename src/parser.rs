@@ -252,6 +252,19 @@ impl<'c> Parser<'c> {
 	}
 
 	fn generics(&mut self) -> Generics {
+		let params = if self.tok() == Token::Bracket(Bracket::Square, true) {
+			self.bracket(Bracket::Square, |parser| {
+				parser.seq(Token::Bracket(Bracket::Square, false), |parser| {
+					match parser.tok() {
+						Token::Name(_) => Some(parser.ident()),
+						_ => None,
+					}
+				})
+			})
+		} else {
+			None
+		};
+
 		Generics
 	}
 
@@ -387,7 +400,7 @@ impl<'c> Parser<'c> {
 
 	fn is_expr(&self) -> bool {
 		match self.tok() {
-			Token::Bracket(_, true) | Token::Name(_) => true,
+			Token::Bracket(_, true) | Token::Name(_) | Token::Num(_) => true,
 			_ => false
 		}
 	}
@@ -491,6 +504,10 @@ impl<'c> Parser<'c> {
 	fn factor(&mut self) -> Expr_ {
 		noded!(self, {
 			match self.tok() {
+				Token::Num(n) => {
+					self.step();
+					Expr::Num(n)
+				}
 				Token::Name(_) => {
 					let name = self.ident();
 					let substs = self.ty_args();
