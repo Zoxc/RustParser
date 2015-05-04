@@ -47,7 +47,6 @@ enum Valueness {
 #[derive(Copy, Clone)]
 struct Args {
 	pub loop_node: Option<Id>,
-	pub unused: bool,
 	pub valueness: Valueness,
 	pub node: Id,
 	pub in_typeof: bool,
@@ -58,7 +57,6 @@ impl Args {
 		Args {
 			node: self.node,
 			loop_node: self.loop_node,
-			unused: false,
 			in_typeof: self.in_typeof,
 			valueness: Valueness::Right,
 		}
@@ -68,7 +66,6 @@ impl Args {
 		Args {
 			node: node,
 			loop_node: None,
-			unused: true,
 			in_typeof: false,
 			valueness: Valueness::Right,
 		}
@@ -332,7 +329,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 	}
 
-	fn infer(&mut self, args: Args, e: &'c Expr_, result: Ty<'c>) {
+	fn infer(&mut self, args: Args, e: &'c Expr_, mut result: Option<Ty<'c>>) {
 		macro_rules! error {
 		    ($($e:expr),*) => {{
 		    	let m = format!($($e),*);
@@ -340,10 +337,22 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		    }}
 		}
 
+		macro_rules! get_result {
+		    () => {{
+		    	if result.is_none() {
+		    		result = Some(self.new_var());
+		    	}
+		    	result
+		    }}
+		}
+
 		macro_rules! result {
 		    ($t:expr) => {{
 		    	let t = $t;
-		    	self.unify(e.info.span, result, t)
+		    	match result {
+		    		Some(r) => self.unify(e.info.span, r, t),
+		    		None => result = Some(t),
+		    	};
 		    }}
 		}
 
@@ -361,19 +370,20 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			Expr::Loop(ref b) => {
 				let mut args = args.next();
 				args.loop_node = Some(e.info.id);
-				let v = self.new_var();
-				self.infer_block(args, b, v);
+				self.infer_block(args, b, None);
 				result!(self.ctx.ty_unit);
 			}
 			Expr::Assign(op, ref lhs, ref rhs) => {
 				let mut l_args = args.next();
 				l_args.valueness = Valueness::LeftTuple;
-				self.infer(l_args, lhs, result);
-				self.infer(args.next(), rhs, result);
+				let r = get_result!();
+				self.infer(l_args, lhs, r);
+				self.infer(args.next(), rhs, r);
 			}
 			Expr::BinOp(ref lhs, op, ref rhs) => {
-				self.infer(args.next(), lhs, result);
-				self.infer(args.next(), rhs, result);
+				let r = get_result!();
+				self.infer(args.next(), lhs, r);
+				self.infer(args.next(), rhs, r);
 			}
 			Expr::Ref(name, id, ref substs) => {
 				result!(self.infer_value(e.info.span, id, substs));
@@ -387,9 +397,10 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 					}
 				};
 				match *ret {
-					Some(ref ret) => self.infer(args.next(), ret, r),
+					Some(ref ret) => self.infer(args.next(), ret, Some(r)),
 					None => self.unify(e.info.span, r, self.ctx.ty_unit),
 				}
+				result!(self.ctx.ty_unit);
 			}
 			Expr::Break => {
 				if args.loop_node.is_none() {
@@ -405,22 +416,21 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			}
 		}
 
-		self.print(e.info.span, &format!("item of type {}", self.format_ty(result)));
+		self.print(e.info.span, &format!("item of type {}", self.format_ty(result.unwrap())));
 	}
 
-	fn infer_block(&mut self, args: Args, b: &'c Block_<Expr_>, result: Ty<'c>) {
+	fn infer_block(&mut self, args: Args, b: &'c Block_<Expr_>, result: Option<Ty<'c>>) {
 		if !b.val.vals.is_empty() {
 			let unused_next = args.next();
 			for e in b.val.vals[..].init().iter() {
-				let var = self.new_var();
-				self.infer(unused_next, e, var);
+				self.infer(unused_next, e, None);
 			};
 		}
 
 		match b.val.vals.last() {
-			Some(r) => self.infer(args.map(|a| a.unused = args.unused ), r, result),
-			None => self.unify(b.info.span, result, self.ctx.ty_unit),
-		}
+			Some(r) => self.infer(args.next(), r, result),
+			None => {result.map(|r| self.unify(b.info.span, r, self.ctx.ty_unit));},
+		};
 	}
 
 	fn infer_value(&mut self, sp: Span, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Ty<'c> {
@@ -511,8 +521,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		match item.val {
 			Item::Fn(ref d) => {
 				let args = Args::new(item.info.id);
-				let t = self.new_var();
-				self.infer_block(args, &d.block, t);
+				self.infer_block(args, &d.block, None);
 				self.print(item.info.span, &format!("fn {} :: {}", self.ctx.src.get_name(d.name.0.val), self.format_ty(ty)));
 			}
 			_ => ()

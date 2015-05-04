@@ -497,8 +497,31 @@ impl<'c> Parser<'c> {
 					Expr::UnaryOp(op, Box::new(self.unary()))
 				})
 			}
-			_ => self.factor()
+			_ => self.chain()
 		}
+	}
+
+	fn chain(&mut self) -> Expr_ {
+		let r = self.factor();
+
+		loop {
+			match self.tok() {
+				Token::Bracket(Bracket::Parent, true) => {
+					self.bracket(Bracket::Parent, |parser| {
+						parser.seq(Token::Bracket(Bracket::Parent, false), |parser| {
+							if parser.is_expr() {
+								Some(parser.expr())
+							} else {
+								None
+							}
+						})
+					});
+				}
+				_ => break
+			}
+		}
+
+		r
 	}
 
 	fn factor(&mut self) -> Expr_ {
