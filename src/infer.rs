@@ -429,7 +429,11 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				self.infer_generics(g, r)
 			}
 			Item::Fn(ref d) => {
-				let ty_args = d.params.iter().map(|p| self.infer_ty(&p.val.1)).collect();
+				let ty_args = d.params.iter().map(|p| {
+					let t = self.infer_ty(&p.val.1);
+					self.tys.insert(p.info.id, Scheme::plain(t));
+					t
+				}).collect();
 				let returns = if d.returns.val == ast::Ty::Infer {
 					if detect_return::run(&d.block) {
 						self.new_var()
@@ -462,13 +466,13 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		for id in self.ids.clone().iter() {
 			match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item_shallow(item),
-				Lookup::Expr(_) => panic!(),
+				_ => panic!(),
 			};
 		}
 		for id in self.ids.clone().iter() {
 			match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item(item),
-				Lookup::Expr(_) => panic!(),
+				_ => panic!(),
 			};
 		}
 		for (k, v) in self.tys.drain() {

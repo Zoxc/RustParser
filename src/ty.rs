@@ -48,4 +48,14 @@ pub struct TyParam<'t> {
 pub struct Scheme<'t> {
 	pub ty: Ty<'t>,
 	pub params: Vec<TyParam<'t>>,
+
+}
+
+impl<'t> Scheme<'t> {
+	pub fn plain(ty: Ty<'t>) -> Scheme<'t> {
+		Scheme {
+			ty: ty,
+			params: Vec::new(),
+		}
+	}
 }

@@ -126,6 +126,7 @@ pub enum Expr {
 pub enum Lookup<'c> {
 	Item(&'c Item_),
 	Expr(&'c Expr_),
+	FnParam(&'c FnParam_),
 }
 
 pub mod fold {

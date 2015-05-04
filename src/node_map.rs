@@ -8,6 +8,11 @@ struct NodeMapPass<'c> {
 }
 
 impl<'c> Folder<'c> for NodeMapPass<'c> {
+	fn fold_fn_param(&mut self, val: &'c FnParam_) {
+		self.map.insert(val.info.id, Lookup::FnParam(val));
+		fold::fold_fn_param(self, val);
+	}
+
 	fn fold_expr(&mut self, val: &'c Expr_) {
 		self.map.insert(val.info.id, Lookup::Expr(val));
 		fold::fold_expr(self, val);
