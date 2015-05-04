@@ -256,7 +256,7 @@ impl<'c> Parser<'c> {
 			self.bracket(Bracket::Square, |parser| {
 				parser.seq(Token::Bracket(Bracket::Square, false), |parser| {
 					match parser.tok() {
-						Token::Name(_) => Some(parser.ident()),
+						Token::Name(_) => Some(noded!(parser, TypeParam { name: parser.ident() })),
 						_ => None,
 					}
 				})
@@ -265,7 +265,9 @@ impl<'c> Parser<'c> {
 			None
 		};
 
-		Generics
+		Generics {
+			params: params.unwrap_or(Vec::new())
+		}
 	}
 
 	fn items(&mut self) -> Block<Item_> {

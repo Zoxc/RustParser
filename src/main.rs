@@ -43,6 +43,11 @@ fn main() {
 
     resolution::run(&src, &mut ast);
 
+    if src.has_msgs() {
+        print!("{}", src.format_msgs());
+        return;
+    }
+
     let map = node_map::create(&ast);
 
     println!("inferring...");

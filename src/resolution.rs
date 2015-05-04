@@ -24,8 +24,10 @@ impl<'c> ResolutionPass<'c> {
 		}
 	}
 
-	fn generics(&mut self, _generics: &mut Generics) {
-
+	fn generics(&mut self, generics: &mut Generics) {
+		for p in generics.params.iter_mut() {
+			self.name(p.info.id, p.val.name);
+		}
 	}
 
 	fn wrap(&'c self, symbols: &'c mut SymbolTable) -> ResolutionPass<'c> {
@@ -44,6 +46,7 @@ impl<'c> ResolutionPass<'c> {
 			Item::Fn(ref mut def) => {
 				self.name(val.info.id, def.name);
 				let mut pass = self.wrap(&mut def.block.val.symbols);
+				pass.generics(&mut def.generics);
 				for param in def.params.iter_mut() {
 					pass.name(param.info.id, param.val.0);
 					pass.ty(&mut param.val.1);

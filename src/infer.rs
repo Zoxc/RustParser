@@ -217,7 +217,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				format!("({}) -> {}", connect!(args), self.format_ty_(ret, true))
 			},
 			Ty_::Kind(_) => format!("kind"),
-			Ty_::Ref(_, ref substs) => format!("ref[{}]", connect!(substs)),
+			Ty_::Ref(i, ref substs) => format!("{}[{}]", self.name(i), connect!(substs)),
 			Ty_::Proj(_, ref substs, _) => format!("proj[{}]", connect!(substs)),
 			Ty_::Ptr(p) => format!("{}*", self.format_ty(p)),
 		}
@@ -487,8 +487,8 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 	}
 
-	fn infer_item_shallow(&mut self, item: &'c Item_) {
-		let scheme = match item.val {
+	fn infer_item_shallow(&mut self, item: &'c Item_) -> Scheme<'c> {
+		match item.val {
 			Item::Data(i, ref g, _) => {
 				let r = self.alloc_ty(Ty_::Ref(item.info.id, Vec::new()));
 				self.infer_generics(g, false, r)
@@ -511,8 +511,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				let ty = self.alloc_ty(Ty_::Fn(ty_args, returns));
 				self.infer_generics(&d.generics, true, ty)
 			}
-		};
-		self.tys.insert(item.info.id, scheme);
+		}
 	}
 
 	fn infer_item(&mut self, item: &'c Item_) {
@@ -530,14 +529,21 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 	fn infer_group(&mut self) {
 		for id in self.ids.clone().iter() {
-			match *self.ctx.node_map.get(id).unwrap() {
+			let scheme = match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item_shallow(item),
+				Lookup::TypeParam(p) => Scheme {
+					ty: self.alloc_ty(Ty_::Ref(p.info.id, Vec::new())),
+					value: false,
+					params: Vec::new(),
+				},
 				_ => panic!(),
 			};
+			self.tys.insert(*id, scheme);
 		}
 		for id in self.ids.clone().iter() {
 			match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item(item),
+				Lookup::TypeParam(p) => (),
 				_ => panic!(),
 			};
 		}

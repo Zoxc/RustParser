@@ -77,8 +77,17 @@ pub type FnParam_ = N<FnParam>;
 #[derive(Clone)]
 pub struct FnParam(pub Ident, pub Ty_);
 
+pub type TypeParam_ = N<TypeParam>;
+
 #[derive(Clone)]
-pub struct Generics;
+pub struct TypeParam {
+	pub name: Ident,
+}
+
+#[derive(Clone)]
+pub struct Generics {
+	pub params: Vec<TypeParam_>,
+}
 
 #[derive(Clone)]
 pub struct FnDef {
@@ -128,6 +137,7 @@ pub enum Lookup<'c> {
 	Item(&'c Item_),
 	Expr(&'c Expr_),
 	FnParam(&'c FnParam_),
+	TypeParam(&'c TypeParam_),
 }
 
 pub mod fold {
@@ -194,6 +204,9 @@ pub mod fold {
 		}
 	}
 
+	pub fn fold_type_param<'c, T: Folder<'c>>(this: &mut T, _param: &'c TypeParam_) {
+	}
+
 	pub fn fold_fn<'c, T: Folder<'c>>(this: &mut T, _info: Info, def: &'c FnDef) {
 		fold_fn_params(this, &def.params);
 		this.fold_expr_block(&def.block);
@@ -219,7 +232,13 @@ pub trait Folder<'c>: Sized {
 		fold::fold_item_block(self, block);
 	}
 
-	fn fold_generics(&mut self, _generics: &'c Generics) {
+	fn fold_type_param(&mut self, _param: &'c TypeParam_) {
+	}
+
+	fn fold_generics(&mut self, generics: &'c Generics) {
+		for p in generics.params.iter() {
+			self.fold_type_param(p);
+		}
 	}
 
 	fn fold_data(&mut self, _info: Info, _name: Ident, generics: &'c Generics, block: &'c Block_<Item_>) {
