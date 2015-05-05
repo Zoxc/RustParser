@@ -209,6 +209,7 @@ pub mod fold {
 
 	pub fn fold_fn<'c, T: Folder<'c>>(this: &mut T, _info: Info, def: &'c FnDef) {
 		fold_fn_params(this, &def.params);
+		this.fold_generics(&def.generics);
 		this.fold_expr_block(&def.block);
 	}
 
