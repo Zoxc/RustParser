@@ -22,8 +22,13 @@ fn block(src: &Source, block: &Block_<Expr_>) -> String {
 	do_block(src, block, expr)
 }
 
-fn generics(_src: &Source, _generics: &Generics) -> String {
-	"[]".to_string()
+fn generics(src: &Source, generics: &Generics) -> String {
+	if generics.params.is_empty() {
+		"".to_string()
+	} else {
+		let p = generics.params.iter().map(|p| format!("{}({})", ident(src, p.val.name), p.info.id.0)).collect::<Vec<String>>().connect(", ");
+		format!("[{}]", p)
+	}
 }
 
 fn substs(src: &Source, s: &Option<Vec<Ty_>>) -> String {

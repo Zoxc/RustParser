@@ -91,15 +91,7 @@ fn alloc_ty<'c>(arena: &'c TypedArena<Ty_<'c>>, ty: Ty_<'c>) -> Ty<'c> {
 
 impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	fn name(&self, id: Id) -> String {
-		let ident = match *self.ctx.node_map.get(&id).unwrap() {
-			Lookup::Item(item) => match item.val {
-				Item::Fn(ref d) => d.name,
-				Item::Data(name, _, _) => name,
-			},
-			Lookup::FnParam(p) => p.val.0,
-			_ => panic!(),
-		};
-		self.ctx.src.get_name(ident.0.val)
+		self.ctx.info(id).0
 	}
 
 	fn error(&self, sp: Span, msg: String) {
@@ -450,7 +442,6 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				self.ctx.infer_id(id)
 			}
 		};
-
 		let err = if scheme.value {
 			Level::Value(self.ctx.ty_err)
 		} else {
@@ -538,6 +529,8 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				},
 				_ => panic!(),
 			};
+			let (name, span) = self.ctx.info(*id);
+			self.print(span, &format!("item{} {} :: {}", id.0, name, self.format_ty(scheme.ty)));
 			self.tys.insert(*id, scheme);
 		}
 		for id in self.ids.clone().iter() {
@@ -572,6 +565,18 @@ impl<'c> InferContext<'c> {
 		self.infer_id(id)
 	}
 
+	fn info(&self, id: Id) -> (String, Span) {
+		let (ident, span) = match *self.node_map.get(&id).unwrap() {
+			Lookup::Item(item) => (match item.val {
+				Item::Fn(ref d) => d.name,
+				Item::Data(name, _, _) => name,
+			}, item.info.span),
+			Lookup::FnParam(p) => (p.val.0, p.info.span),
+			Lookup::TypeParam(p) => (p.val.name, p.info.span),
+			_ => panic!(),
+		};
+		(self.src.get_name(ident.0.val), span)
+	}
 } 
 
 struct InferPass<'ctx, 'c: 'ctx> {
@@ -596,7 +601,7 @@ pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<
 		arena: &arena,
 		node_map: node_map,
 		type_map: RefCell::new(HashMap::new()),
-		recursion_map: recursion::run(block),
+		recursion_map: recursion::run(block, node_map),
 
 		ty_err: alloc_ty(&arena, Ty_::Error),
 		ty_int: alloc_ty(&arena, Ty_::Int),
