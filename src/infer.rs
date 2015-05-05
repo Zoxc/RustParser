@@ -6,7 +6,7 @@ use std::rc::Rc;
 use lexer::Span;
 use std::cell::RefCell;
 use ast::{Id, Info, Ident, FnParam_, Generics, Block_, Expr_, Item, Expr, Item_, Folder, Lookup};
-use ty::{Ty, Ty_, Scheme, Level};
+use ty::{Ty, Ty_, Scheme, Level, TyParam};
 use node_map::NodeMap;
 use recursion;
 use arena::TypedArena;
@@ -219,11 +219,20 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		self.format_ty_(ty, false)
 	}
 
-	fn infer_generics(&mut self, _generics: &'c Generics, value: bool, ty: Ty<'c>) -> Scheme<'c> {
+	fn infer_generics(&mut self, generics: &'c Generics, value: bool, ty: Ty<'c>) -> Scheme<'c> {
 		Scheme {
 			ty: ty,
 			value: value,
-			params: Vec::new(),
+			params: generics.params.iter().map(|p| {
+				TyParam {
+					id: p.info.id,
+					scheme: Scheme {
+						ty: self.alloc_ty(Ty_::Ref(p.info.id, Vec::new())),
+						value: false,
+						params: Vec::new()
+					}
+				}
+			}).collect(),
 		}
 	}
 
@@ -359,6 +368,36 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 
 		match e.val {
+			Expr::Call(ref obj, ref f_args) => {
+				let fun = self.new_var();
+				self.infer(args.next(), obj, Some(fun));
+
+				match *self.prune(fun) {
+					Ty_::Fn(ref obj_args, obj_r) => {
+						if obj_args.len() != f_args.len() {
+							error!("Call expected {} arguments, but {} was given", obj_args.len(), f_args.len());
+
+						} else {
+							for (o, a) in obj_args.iter().zip(f_args.iter()) {
+								self.infer(args.next(), a, Some(*o));
+
+							}
+						}
+						result!(obj_r);
+					}
+					_ => {
+						let f_ty_args = f_args.iter().map(|a| {
+							let v = self.new_var();
+							self.infer(args.next(), a, Some(v));
+							v
+						}).collect();
+						let r = self.new_var();
+						let fun_ty = self.alloc_ty(Ty_::Fn(f_ty_args, r));
+						self.unify(e.info.span, fun_ty, fun);
+						result!(r);
+					}
+				}
+			}
 			Expr::Loop(ref b) => {
 				let mut args = args.next();
 				args.loop_node = Some(e.info.id);
@@ -394,6 +433,9 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				}
 				result!(self.ctx.ty_unit);
 			}
+			Expr::Num(_) => {
+				result!(self.ctx.ty_int);
+			}
 			Expr::Break => {
 				if args.loop_node.is_none() {
 					error!("Break without a loop");
@@ -408,7 +450,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			}
 		}
 
-		self.print(e.info.span, &format!("item of type {}", self.format_ty(result.unwrap())));
+		self.print(e.info.span, &format!("expr({}) of type {}", e.info.id.0, self.format_ty(result.unwrap())));
 	}
 
 	fn infer_block(&mut self, args: Args, b: &'c Block_<Expr_>, result: Option<Ty<'c>>) {
@@ -469,6 +511,14 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 		let param = |id| param_map.get(&id).map(|t| *t);
 
+		// DEBUG
+		let p = param_map.iter().map(|(k,v)| format!("{}: {}, ", self.name(*k), self.format_ty(v))).fold(String::new(), |mut a, b| {
+	        a.push_str(&b);
+	        a
+	    });
+
+		//self.print(sp, &format!("ref({}) map {}", id.0, p));
+
 		let ty = self.inst_ty(scheme.ty, &param);
 
 		if scheme.value {
@@ -512,7 +562,6 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			Item::Fn(ref d) => {
 				let args = Args::new(item.info.id);
 				self.infer_block(args, &d.block, None);
-				self.print(item.info.span, &format!("fn {} :: {}", self.ctx.src.get_name(d.name.0.val), self.format_ty(ty)));
 			}
 			_ => ()
 		}
@@ -529,8 +578,6 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				},
 				_ => panic!(),
 			};
-			let (name, span) = self.ctx.info(*id);
-			self.print(span, &format!("item{} {} :: {}", id.0, name, self.format_ty(scheme.ty)));
 			self.tys.insert(*id, scheme);
 		}
 		for id in self.ids.clone().iter() {
@@ -539,6 +586,11 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				Lookup::TypeParam(p) => (),
 				_ => panic!(),
 			};
+		}
+		for id in self.ids.clone().iter() {
+			let ty = self.tys.get(id).unwrap().ty;
+			let (name, span) = self.ctx.info(*id);
+			self.print(span, &format!("item({}) {} :: {}", id.0, name, self.format_ty(ty)));
 		}
 		for (k, v) in self.tys.drain() {
 			self.ctx.type_map.borrow_mut().insert(k, v);

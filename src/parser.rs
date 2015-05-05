@@ -504,19 +504,21 @@ impl<'c> Parser<'c> {
 	}
 
 	fn chain(&mut self) -> Expr_ {
-		let r = self.factor();
+		let mut r = self.factor();
 
 		loop {
 			match self.tok() {
 				Token::Bracket(Bracket::Parent, true) => {
-					self.bracket(Bracket::Parent, |parser| {
-						parser.seq(Token::Bracket(Bracket::Parent, false), |parser| {
+					r = extend!(self, r, {
+						let params = self.bracket_seq(Bracket::Parent, |parser| {
 							if parser.is_expr() {
 								Some(parser.expr())
 							} else {
 								None
 							}
-						})
+						});
+
+						Expr::Call(Box::new(r), params)
 					});
 				}
 				_ => break

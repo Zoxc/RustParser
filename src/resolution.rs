@@ -85,6 +85,10 @@ impl<'c> ResolutionPass<'c> {
 	fn expr(&mut self, val: &mut Expr_) {
 		match val.val {
 			Expr::Break | Expr::Error | Expr::Num(_) => (),
+			Expr::Call(ref mut obj, ref mut args) => {
+				self.expr(obj);
+				self.exprs(args);
+			}
 			Expr::Ref(ident, ref mut id, ref mut s) => self.fold_ref(ident, id, s),
 			Expr::If(ref mut cond, ref mut then, ref mut otherwise) => {
 				self.expr(cond);
@@ -112,9 +116,7 @@ impl<'c> ResolutionPass<'c> {
 
 	fn expr_block(&mut self, block: &mut Block_<Expr_>) {
 		let mut pass = self.wrap(&mut block.val.symbols);
-		for v in block.val.vals.iter_mut() {
-			pass.expr(v);
-		}
+		pass.exprs(&mut block.val.vals);
 	}
 
 	fn exprs(&mut self, vals: &mut Vec<Expr_>) {

@@ -122,6 +122,7 @@ pub type Expr_ = N<Expr>;
 pub enum Expr {
 	Error,
 	Num(Num),
+	Call(Box<Expr_>, Vec<Expr_>),
 	Assign(Op, Box<N<Expr>>, Box<N<Expr>>),
 	BinOp(Box<N<Expr>>, Op, Box<N<Expr>>),
 	UnaryOp(Op, Box<N<Expr>>),
@@ -171,6 +172,10 @@ pub mod fold {
 	pub fn fold_expr<'c, T: Folder<'c>>(this: &mut T, val: &'c Expr_) {
 		match val.val {
 			Expr::Break | Expr::Error | Expr::Num(_) => (),
+			Expr::Call(ref obj, ref args) => {
+				this.fold_expr(obj);
+				fold_exprs(this, args);
+			}
 			Expr::Ref(ident, id, ref substs) => {
 				this.fold_ref(ident, id);
 				fold_ty_substs(this, substs);
@@ -204,7 +209,7 @@ pub mod fold {
 		}
 	}
 
-	pub fn fold_type_param<'c, T: Folder<'c>>(this: &mut T, _param: &'c TypeParam_) {
+	pub fn fold_type_param<'c, T: Folder<'c>>(_this: &mut T, _param: &'c TypeParam_) {
 	}
 
 	pub fn fold_fn<'c, T: Folder<'c>>(this: &mut T, _info: Info, def: &'c FnDef) {
