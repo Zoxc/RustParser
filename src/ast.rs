@@ -141,145 +141,145 @@ pub enum Lookup<'c> {
 	TypeParam(&'c TypeParam_),
 }
 
-pub mod fold {
+pub mod visit {
 	use super::*;
 
-	pub fn fold_expr_block<'c, T: Folder<'c>>(this: &mut T, block: &'c Block_<Expr_>) {
-		fold_exprs(this, &block.val.vals);
+	pub fn visit_expr_block<'c, T: Visitor<'c>>(this: &mut T, block: &'c Block_<Expr_>) {
+		visit_exprs(this, &block.val.vals);
 	}
 
-	pub fn fold_exprs<'c, T: Folder<'c>>(this: &mut T, vals: &'c Vec<Expr_>) {
+	pub fn visit_exprs<'c, T: Visitor<'c>>(this: &mut T, vals: &'c Vec<Expr_>) {
 		for v in vals.iter() {
-			this.fold_expr(v);
+			this.visit_expr(v);
 		}
 	}
 
-	pub fn fold_item_block<'c, T: Folder<'c>>(this: &mut T, block: &'c Block_<Item_>) {
-		fold_items(this, &block.val.vals);
+	pub fn visit_item_block<'c, T: Visitor<'c>>(this: &mut T, block: &'c Block_<Item_>) {
+		visit_items(this, &block.val.vals);
 	}
 
-	pub fn fold_item<'c, T: Folder<'c>>(this: &mut T, val: &'c Item_) {
+	pub fn visit_item<'c, T: Visitor<'c>>(this: &mut T, val: &'c Item_) {
 		match val.val {
-			Item::Data(i, ref g, ref b) => this.fold_data(val.info, i, g, b),
-			Item::Fn(ref d) => this.fold_fn(val.info, d)
+			Item::Data(i, ref g, ref b) => this.visit_data(val.info, i, g, b),
+			Item::Fn(ref d) => this.visit_fn(val.info, d)
 		};
 	}
 
-	pub fn fold_ty_substs<'c, T: Folder<'c>>(this: &mut T, val: &'c Option<Vec<Ty_>>) {
-		val.as_ref().map(|t| t.iter().map(|t| this.fold_ty(t)));
+	pub fn visit_ty_substs<'c, T: Visitor<'c>>(this: &mut T, val: &'c Option<Vec<Ty_>>) {
+		val.as_ref().map(|t| t.iter().map(|t| this.visit_ty(t)));
 	}
 
-	pub fn fold_expr<'c, T: Folder<'c>>(this: &mut T, val: &'c Expr_) {
+	pub fn visit_expr<'c, T: Visitor<'c>>(this: &mut T, val: &'c Expr_) {
 		match val.val {
 			Expr::Break | Expr::Error | Expr::Num(_) => (),
 			Expr::Call(ref obj, ref args) => {
-				this.fold_expr(obj);
-				fold_exprs(this, args);
+				this.visit_expr(obj);
+				visit_exprs(this, args);
 			}
 			Expr::Ref(ident, id, ref substs) => {
-				this.fold_ref(ident, id);
-				fold_ty_substs(this, substs);
+				this.visit_ref(ident, id);
+				visit_ty_substs(this, substs);
 			}
 			Expr::If(ref cond, ref then, ref otherwise) => {
-				this.fold_expr(cond);
-				this.fold_expr_block(then);
+				this.visit_expr(cond);
+				this.visit_expr_block(then);
 				if let Some(ref v) = *otherwise {
-					this.fold_expr(v);
+					this.visit_expr(v);
 				};
 			},
 			Expr::Assign(_, ref lhs, ref rhs) => {
-				this.fold_expr(lhs);
-				this.fold_expr(rhs);
+				this.visit_expr(lhs);
+				this.visit_expr(rhs);
 			} 
 			Expr::UnaryOp(_, ref e) => {
-				this.fold_expr(e);
+				this.visit_expr(e);
 			} 
 			Expr::BinOp(ref lhs, _, ref rhs) => {
-				this.fold_expr(lhs);
-				this.fold_expr(rhs);
+				this.visit_expr(lhs);
+				this.visit_expr(rhs);
 			} 
-			Expr::Return(ref ret) => {ret.as_ref().map(|m| this.fold_expr(&m));},
-			Expr::Block(ref b) => this.fold_expr_block(b),
-			Expr::Loop(ref b) => this.fold_expr_block(b),
+			Expr::Return(ref ret) => {ret.as_ref().map(|m| this.visit_expr(&m));},
+			Expr::Block(ref b) => this.visit_expr_block(b),
+			Expr::Loop(ref b) => this.visit_expr_block(b),
 		};
 	}
-	pub fn fold_items<'c, T: Folder<'c>>(this: &mut T, vals: &'c Vec<Item_>) {
+	pub fn visit_items<'c, T: Visitor<'c>>(this: &mut T, vals: &'c Vec<Item_>) {
 		for v in vals.iter() {
-			this.fold_item(v);
+			this.visit_item(v);
 		}
 	}
 
-	pub fn fold_type_param<'c, T: Folder<'c>>(_this: &mut T, _param: &'c TypeParam_) {
+	pub fn visit_type_param<'c, T: Visitor<'c>>(_this: &mut T, _param: &'c TypeParam_) {
 	}
 
-	pub fn fold_fn<'c, T: Folder<'c>>(this: &mut T, _info: Info, def: &'c FnDef) {
-		fold_fn_params(this, &def.params);
-		this.fold_generics(&def.generics);
-		this.fold_expr_block(&def.block);
+	pub fn visit_fn<'c, T: Visitor<'c>>(this: &mut T, _info: Info, def: &'c FnDef) {
+		visit_fn_params(this, &def.params);
+		this.visit_generics(&def.generics);
+		this.visit_expr_block(&def.block);
 	}
 
-	pub fn fold_fn_param<'c, T: Folder<'c>>(this: &mut T, param: &'c FnParam_) {
-		this.fold_ty(&param.val.1);
+	pub fn visit_fn_param<'c, T: Visitor<'c>>(this: &mut T, param: &'c FnParam_) {
+		this.visit_ty(&param.val.1);
 	}
 
-	pub fn fold_fn_params<'c, T: Folder<'c>>(this: &mut T, vals: &'c Vec<FnParam_>) {
+	pub fn visit_fn_params<'c, T: Visitor<'c>>(this: &mut T, vals: &'c Vec<FnParam_>) {
 		for v in vals.iter() {
-			this.fold_fn_param(v);
+			this.visit_fn_param(v);
 		}
 	}
 }
 
-pub trait Folder<'c>: Sized {
-	fn fold_expr_block(&mut self, block: &'c Block_<Expr_>) {
-		fold::fold_expr_block(self, block);
+pub trait Visitor<'c>: Sized {
+	fn visit_expr_block(&mut self, block: &'c Block_<Expr_>) {
+		visit::visit_expr_block(self, block);
 	}
 
-	fn fold_item_block(&mut self, block: &'c Block_<Item_>) {
-		fold::fold_item_block(self, block);
+	fn visit_item_block(&mut self, block: &'c Block_<Item_>) {
+		visit::visit_item_block(self, block);
 	}
 
-	fn fold_type_param(&mut self, _param: &'c TypeParam_) {
+	fn visit_type_param(&mut self, _param: &'c TypeParam_) {
 	}
 
-	fn fold_generics(&mut self, generics: &'c Generics) {
+	fn visit_generics(&mut self, generics: &'c Generics) {
 		for p in generics.params.iter() {
-			self.fold_type_param(p);
+			self.visit_type_param(p);
 		}
 	}
 
-	fn fold_data(&mut self, _info: Info, _name: Ident, generics: &'c Generics, block: &'c Block_<Item_>) {
-		self.fold_generics(generics);
-		fold::fold_item_block(self, block);
+	fn visit_data(&mut self, _info: Info, _name: Ident, generics: &'c Generics, block: &'c Block_<Item_>) {
+		self.visit_generics(generics);
+		visit::visit_item_block(self, block);
 	}
 
-	fn fold_fn(&mut self, info: Info, def: &'c FnDef){
-		fold::fold_fn(self, info, def);
+	fn visit_fn(&mut self, info: Info, def: &'c FnDef){
+		visit::visit_fn(self, info, def);
 	}
 
-	fn fold_fn_param(&mut self, param: &'c FnParam_) {
-		fold::fold_fn_param(self, param);
+	fn visit_fn_param(&mut self, param: &'c FnParam_) {
+		visit::visit_fn_param(self, param);
 	}
 
-	fn fold_item(&mut self, val: &'c Item_) {
-		fold::fold_item(self, val);
+	fn visit_item(&mut self, val: &'c Item_) {
+		visit::visit_item(self, val);
 	}
 
-	fn fold_ty(&mut self, val: &'c Ty_) {
+	fn visit_ty(&mut self, val: &'c Ty_) {
 		match val.val {
 			Ty::Infer => (),
 			Ty::Error => (),
-			Ty::Ptr(ref t) => self.fold_ty(t), 
+			Ty::Ptr(ref t) => self.visit_ty(t), 
 			Ty::Ref(ident, id, ref substs) => {
-				self.fold_ref(ident, id);
-				fold::fold_ty_substs(self, substs);
+				self.visit_ref(ident, id);
+				visit::visit_ty_substs(self, substs);
 			},
 		};
 	}
 
-	fn fold_ref(&mut self, _ident: Ident, _id: Id) {
+	fn visit_ref(&mut self, _ident: Ident, _id: Id) {
 	}
 
-	fn fold_expr(&mut self, val: &'c Expr_) {
-		fold::fold_expr(self, val);
+	fn visit_expr(&mut self, val: &'c Expr_) {
+		visit::visit_expr(self, val);
 	}
 }

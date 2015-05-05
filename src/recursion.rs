@@ -38,7 +38,7 @@ impl<'a, 'c>  RecursionCtx<'a, 'c> {
 
 		match *self.node_map.get(&id).unwrap() {
 			Lookup::Item(item) => match item.val {
-				Item::Fn(_) => self.fold_item(item),
+				Item::Fn(_) => self.visit_item(item),
 				_ => (),
 			},
 			_ => (),
@@ -48,8 +48,8 @@ impl<'a, 'c>  RecursionCtx<'a, 'c> {
 	}
 }
 
-impl<'a, 'c> Folder<'c> for RecursionCtx<'a, 'c> {
-	fn fold_ref(&mut self, _: Ident, id: Id) {
+impl<'a, 'c> Visitor<'c> for RecursionCtx<'a, 'c> {
+	fn visit_ref(&mut self, _: Ident, id: Id) {
 		self.get_id(id);
 	}
 }
@@ -60,15 +60,15 @@ struct RecursionPass<'c> {
 	map: HashMap<Id, Rc<Vec<Id>>>,
 }
 
-impl<'c> Folder<'c> for RecursionPass<'c> {
-	fn fold_item(&mut self, val: &'c Item_) {
+impl<'c> Visitor<'c> for RecursionPass<'c> {
+	fn visit_item(&mut self, val: &'c Item_) {
 		RecursionCtx {
 			stack: Vec::new(),
 			node_map: self.node_map,
 			visited: &mut self.visited,
 			map: &mut self.map
 		}.get_id(val.info.id);
-		ast::fold::fold_item(self, val);
+		ast::visit::visit_item(self, val);
 	}
 }
 
@@ -78,6 +78,6 @@ pub fn run<'c>(block: &'c Block_<Item_>, node_map: &'c NodeMap<'c>) -> HashMap<I
 		visited: HashSet::new(),
 		map: HashMap::new(),
 	};
-	pass.fold_item_block(block);
+	pass.visit_item_block(block);
 	pass.map
 }

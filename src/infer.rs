@@ -5,7 +5,7 @@ use misc::Source;
 use std::rc::Rc;
 use lexer::Span;
 use std::cell::RefCell;
-use ast::{Id, Info, Ident, FnParam_, Generics, Block_, Expr_, Item, Expr, Item_, Folder, Lookup};
+use ast::{Id, Info, Ident, FnParam_, Generics, Block_, Expr_, Item, Expr, Item_, Visitor, Lookup};
 use ty::{Ty, Ty_, Scheme, Level, TyParam};
 use node_map::NodeMap;
 use recursion;
@@ -635,14 +635,14 @@ struct InferPass<'ctx, 'c: 'ctx> {
 	ctx: &'ctx InferContext<'c>,
 }
 
-impl<'ctx, 'c> Folder<'c> for InferPass<'ctx, 'c> {
+impl<'ctx, 'c> Visitor<'c> for InferPass<'ctx, 'c> {
 	// Ignore expressions
-	fn fold_expr(&mut self, _: &'c Expr_) {
+	fn visit_expr(&mut self, _: &'c Expr_) {
 	}
 
-	fn fold_item(&mut self, val: &'c Item_) {
+	fn visit_item(&mut self, val: &'c Item_) {
 		self.ctx.infer_id(val.info.id);
-		ast::fold::fold_item(self, val);
+		ast::visit::visit_item(self, val);
 	}
 }
 
@@ -661,5 +661,5 @@ pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<
 	};
 
 	let mut pass = InferPass { ctx: &ctx };
-	pass.fold_item_block::<'c, 'c>(block);
+	pass.visit_item_block::<'c, 'c>(block);
 }

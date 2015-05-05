@@ -4,8 +4,8 @@ struct DetectReturn {
 	found: bool,
 }
 
-impl<'c> Folder<'c> for DetectReturn {
-	fn fold_expr(&mut self, val: &'c Expr_) {
+impl<'c> Visitor<'c> for DetectReturn {
+	fn visit_expr(&mut self, val: &'c Expr_) {
 		match val.val {
 			Expr::Return(_) => self.found = true,
 			_ => ()
@@ -15,12 +15,12 @@ impl<'c> Folder<'c> for DetectReturn {
 			return;
 		}
 
-		fold::fold_expr(self, val);
+		visit::visit_expr(self, val);
 	}
 }
 
 pub fn run<'c>(block: &'c Block_<Expr_>) -> bool {
 	let mut pass = DetectReturn { found: false };
-	pass.fold_expr_block(block);
+	pass.visit_expr_block(block);
 	pass.found
 }
