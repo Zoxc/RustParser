@@ -7,7 +7,7 @@ use std::ffi::CString;
 use infer::InferContext;
 use llvm;
 use llvm::{ContextRef, ValueRef, ModuleRef, BasicBlockRef, BuilderRef};
-use codegen::GenContext;
+use codegen::{GenContext, c_str};
 
 pub struct GenExpr<'g, 'i: 'g, 'c: 'i> {
 	pub ctx: &'g GenContext<'i, 'c>,
@@ -17,7 +17,16 @@ pub struct GenExpr<'g, 'i: 'g, 'c: 'i> {
 }
 
 impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
-	pub fn block(&self, b: &'c Block_<Expr_>) -> Option<ValueRef>  {
+	pub fn bb(&mut self, s: &str) -> BasicBlockRef {
+		unsafe {
+			let old = self.bb;
+			self.bb =  llvm::LLVMInsertBasicBlockInContext(self.ctx.ll_ctx, self.bb, c_str(s).as_ptr());
+			llvm::LLVMPositionBuilderAtEnd(self.builder, self.bb);
+			old
+		}
+	}
+
+	pub fn block(&mut self, b: &'c Block_<Expr_>) -> Option<ValueRef>  {
 		if !b.val.vals.is_empty() {
 			for e in b.val.vals[..].init().iter() {
 				self.expr(e);
@@ -30,7 +39,7 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 		}
 	}
 
-	pub fn expr(&self, e: &'c Expr_) -> Option<ValueRef>  {
+	pub fn expr(&mut self, e: &'c Expr_) -> Option<ValueRef>  {
 		unsafe {
 			match e.val {
 				Expr::Call(ref obj, ref f_args) => {
@@ -56,6 +65,10 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 					None
 				}
 				Expr::Return(ref ret) => {
+					match ret.as_ref().and_then(|v| self.expr(&v)) {
+						Some(v) => llvm::LLVMBuildRet(self.builder, v),
+						None => llvm::LLVMBuildRetVoid(self.builder)
+					};
 					None
 				}
 				Expr::Num(num) => {

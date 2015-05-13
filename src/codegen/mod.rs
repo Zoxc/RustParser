@@ -10,7 +10,8 @@ use infer;
 use infer::{InferContext, RefMap};
 use std::ptr;
 use llvm;
-use llvm::{ContextRef, ValueRef, ModuleRef};
+use llvm::{ContextRef, ValueRef, TypeRef, ModuleRef};
+use libc;
 
 mod expr;
 
@@ -25,6 +26,25 @@ pub fn c_str(s: &str) -> CString {
 }
 
 impl<'i, 'c> GenContext<'i, 'c> {
+	pub fn ll_ty_or_void(&self, ty: ty::Ty<'c>) -> TypeRef {
+		unsafe { self.ll_ty(ty).unwrap_or(llvm::LLVMVoidTypeInContext(self.ll_ctx)) }
+	}
+
+	pub fn ll_ty(&self, ty: ty::Ty<'c>) -> Option<TypeRef> {
+		unsafe {
+			match *ty {
+				ty::Ty_::Error | ty::Ty_::Infer(_) | ty::Ty_::Proj(_, _, _) => panic!(),
+				ty::Ty_::Tuple(ref args) => if args.is_empty() {
+					None
+				} else {
+					Some(llvm::LLVMInt64TypeInContext(self.ll_ctx))
+				},
+				ty::Ty_::Ptr(p) => self.ll_ty(p).map(|l| llvm::LLVMPointerType(l, 0)),
+				_ => Some(llvm::LLVMInt64TypeInContext(self.ll_ctx)),
+			}
+		}
+	}
+
 	pub fn fixed_ty(&self, ty: ty::Ty<'c>, map: &RefMap<'c>) -> ty::Ty<'c> {
 
 		let info = infer::Vars {
@@ -93,6 +113,7 @@ impl<'i, 'c> GenContext<'i, 'c> {
 
 	pub fn gen(&self, id: Id, map: &RefMap<'c>) {
 		let info = &self.infer.type_map.borrow().get(&id).unwrap().1.clone();
+		let scheme = &self.infer.type_map.borrow().get(&id).unwrap().0.clone();
 
 		{
 
@@ -108,6 +129,15 @@ impl<'i, 'c> GenContext<'i, 'c> {
 			Lookup::Item(item) => match item.val {
 				Item::Fn(ref d) => {
 					unsafe {
+						match *self.fixed_ty(scheme.ty, map) {
+							ty::Ty_::Fn(ref args, ret) => {
+								let vec: Vec<TypeRef> = args.iter().map(|a| self.ll_ty(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
+								
+								llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False);
+							}
+							_ => panic!(),
+						};
+
 						let ty = llvm::LLVMFunctionType(llvm::LLVMVoidTypeInContext(self.ll_ctx), ptr::null(), 0, llvm::False);
 						let f =  llvm::LLVMAddFunction(self.ll_mod,
 							c_str(&self.mangle(id, map)).as_ptr(),
@@ -119,7 +149,7 @@ impl<'i, 'c> GenContext<'i, 'c> {
 
 						llvm::LLVMPositionBuilderAtEnd(builder, entry);
 
-						let gen = expr::GenExpr {
+						let mut gen = expr::GenExpr {
 							ctx: &self,
 							def: Some(d),
 							builder: builder,
@@ -169,8 +199,10 @@ impl<'a, 'ctx, 'c> Visitor<'c> for GenPass<'a, 'ctx, 'c> {
 	}
 
 	fn visit_item(&mut self, val: &'c Item_) {
-		self.ctx.gen(val.info.id, &RefMap { params: HashMap::new() });
-		ast::visit::visit_item(self, val);
+		if self.ctx.infer.type_map.borrow().get(&val.info.id).unwrap().0.params.is_empty() {
+			self.ctx.gen(val.info.id, &RefMap { params: HashMap::new() });
+			ast::visit::visit_item(self, val);
+		}
 	}
 }
 

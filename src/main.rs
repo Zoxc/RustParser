@@ -1,10 +1,11 @@
-#![feature(rustc_private, collections, std_misc)]
+#![feature(rustc_private, collections, std_misc, libc)]
 
 extern crate arena;
 
 #[cfg(test)]
 extern crate quickcheck;
 
+extern crate libc;
 extern crate rustc_llvm as llvm;
 
 use std::rc::Rc;
