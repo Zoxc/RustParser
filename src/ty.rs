@@ -2,7 +2,7 @@ use ast::Id;
 
 pub type Ty<'t> = &'t Ty_<'t>;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum Ty_<'t> {
 	Error,
 	Int,

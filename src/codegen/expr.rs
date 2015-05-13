@@ -78,7 +78,7 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 					Some(llvm::LLVMBuildAdd(self.builder, l, r, c_str("add").as_ptr()))
 				}
 				Expr::Ref(name, id, ref substs) => {
-					self.get_ref(id, self.info.refs.get(&id).unwrap());
+					self.get_ref(id, self.info.refs.get(&e.info.id).unwrap());
 					None
 				}
 				Expr::Return(ref ret) => {

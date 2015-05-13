@@ -17,6 +17,9 @@ mod expr;
 
 pub struct GenContext<'i, 'c: 'i> {
 	infer: &'i InferContext<'c>,
+
+	gen_list: RefCell<HashMap<Id, HashSet<Vec<ty::Ty<'c>>>>>,
+
 	ll_ctx: ContextRef,
 	ll_mod: ModuleRef,
 
@@ -114,8 +117,20 @@ impl<'i, 'c> GenContext<'i, 'c> {
 	}
 
 	pub fn gen(&self, id: Id, map: &RefMap<'c>) {
-		let info = self.infer.type_map.borrow().get(&id).unwrap().1.clone();
 		let scheme = &self.infer.type_map.borrow().get(&id).unwrap().0.clone();
+
+		{
+			let mut list = self.gen_list.borrow_mut();
+			let set = list.entry(id).or_insert(HashSet::new());
+
+			let params: Vec<ty::Ty<'c>> = scheme.params.iter().map(|p| *map.params.get(&p.id).unwrap() ).collect();
+
+			if !set.insert(params) {
+				return;
+			}
+		}
+
+		let info = self.infer.type_map.borrow().get(&id).unwrap().1.clone();
 
 		{
 
@@ -187,6 +202,7 @@ unsafe fn make_ctx<'i, 'c>(infer: &'i InferContext<'c>) -> GenContext<'i, 'c> {
 
 	GenContext {
 		infer: infer,
+		gen_list: RefCell::new(HashMap::new()),
 		ll_ctx: llcx,
 		ll_mod: llmod,
 		void_ptr: llvm::LLVMPointerType(llvm::LLVMInt8TypeInContext(llcx), 0),
