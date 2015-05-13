@@ -124,13 +124,13 @@ impl<'c> Vars<'c> {
 		self.format_ty_(ctx, ty, false)
 	}
 
-	fn lookup_var(&self, idx: u32) -> Ty<'c> {
-		let ty = self.vars.borrow()[idx as usize];
+	fn lookup_var(&self, idx: usize) -> Ty<'c> {
+		let ty = self.vars.borrow()[idx];
 
 		match *ty {
 			Ty_::Infer(target) if target != idx => {
 				let r = self.lookup_var(target);
-				self.vars.borrow_mut()[idx as usize] = r;
+				self.vars.borrow_mut()[idx] = r;
 				r
 			}
 			_ => ty,
@@ -196,6 +196,7 @@ impl<'c> Vars<'c> {
 
 struct InferGroup<'ctx, 'c: 'ctx> {
 	info: GroupInfo<'c>,
+	var_spans: RefCell<Vec<Span>>,
 	tys: HashMap<Id, Scheme<'c>>,
 	ctx: &'ctx InferContext<'c>,
 }
@@ -221,10 +222,11 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		alloc_ty(self.ctx.arena, ty)
 	}
 
-	fn new_var(&mut self) -> Ty<'c> {
-		let r = self.info.vars.vars.borrow().len() as u32;
+	fn new_var(&mut self, sp: Span) -> Ty<'c> {
+		let r = self.info.vars.vars.borrow().len();
 		let t = self.alloc_ty(Ty_::Infer(r));
 		self.info.vars.vars.borrow_mut().push(t);
+		self.var_spans.borrow_mut().push(sp);
 		t
 	}
 
@@ -313,7 +315,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 	fn infer_ty(&mut self, ty: &'c ast::Ty_) -> Ty<'c> {
 		match ty.val {
-			ast::Ty::Infer => self.new_var(),
+			ast::Ty::Infer => self.new_var(ty.info.span),
 			ast::Ty::Ref(_, id, ref substs) => {
 				match self.infer_id(ty.info, id, substs) {
 					Level::Type(v) => v,
@@ -342,7 +344,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		macro_rules! get_result {
 		    () => {{
 		    	if result.is_none() {
-		    		result = Some(self.new_var());
+		    		result = Some(self.new_var(e.info.span));
 		    	}
 		    	result
 		    }}
@@ -370,7 +372,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 		match e.val {
 			Expr::Call(ref obj, ref f_args) => {
-				let fun = self.new_var();
+				let fun = self.new_var(e.info.span);
 				self.infer(args.next(), obj, Some(fun));
 
 				match *self.prune(fun) {
@@ -387,11 +389,11 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 					}
 					_ => {
 						let f_ty_args = f_args.iter().map(|a| {
-							let v = self.new_var();
+							let v = self.new_var(a.info.span);
 							self.infer(args.next(), a, Some(v));
 							v
 						}).collect();
-						let r = self.new_var();
+						let r = self.new_var(e.info.span);
 						let fun_ty = self.alloc_ty(Ty_::Fn(f_ty_args, r));
 						self.unify(e.info.span, fun_ty, fun);
 						result!(r);
@@ -504,7 +506,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			}
 			None => {
 				for param in scheme.params {
-					param_map.insert(param.id, self.new_var());
+					param_map.insert(param.id, self.new_var(info.span));
 				}
 			}
 		}
@@ -546,7 +548,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				}).collect();
 				let returns = if d.returns.val == ast::Ty::Infer {
 					if detect_return::run(&d.block) {
-						self.new_var()
+						self.new_var(item.info.span)
 					} else {
 						self.ctx.ty_unit
 					}
@@ -597,6 +599,20 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			self.print(span, &format!("item({}) {} :: {}", id.0, self.ctx.path(*id), self.format_ty(ty)));
 		}
 
+		for i in 0..self.info.vars.vars.borrow().len() {
+			let ty = self.info.vars.vars.borrow()[i];
+			match *ty {
+				Ty_::Infer(a) if a == i => {
+					self.error(self.var_spans.borrow()[i], format!("Unconstrained type variable {}", self.format_ty(ty)));
+				}
+				_ => (),
+			}
+		}
+
+		for (_, scheme) in self.tys.iter_mut() {
+			scheme.ty = self.info.vars.inst_ty(self.ctx, scheme.ty, &HashMap::new(), true);
+		}
+
 		for (_, map) in self.info.refs.iter_mut() {
 			for (_, ty) in map.params.iter_mut() {
 				*ty = self.info.vars.inst_ty(self.ctx, *ty, &HashMap::new(), true);
@@ -622,6 +638,7 @@ impl<'c> InferContext<'c> {
 				},
 				refs: HashMap::new(),
 			},
+			var_spans: RefCell::new(Vec::new()),
 			tys: HashMap::new(),
 			ctx: self,
 		};
@@ -688,6 +705,11 @@ pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<
 
 	let mut pass = InferPass { ctx: &ctx };
 	pass.visit_item_block(block);
+
+    if src.has_msgs() {
+        print!("{}", src.format_msgs());
+        return;
+    }
 
     println!("generating code...");
     

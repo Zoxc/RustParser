@@ -55,6 +55,4 @@ fn main() {
     println!("inferring...");
     
     infer::run(&src, &ast, &map, parents);
-
-	print!("{}", src.format_msgs());
 }

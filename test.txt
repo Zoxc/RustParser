@@ -1,5 +1,5 @@
 data test
-    fn hi(a, test** b)
+    fn hi(test** b)
         loop
             hi
             

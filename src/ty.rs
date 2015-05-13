@@ -7,7 +7,7 @@ pub enum Ty_<'t> {
 	Error,
 	Int,
 	Tuple(Vec<Ty<'t>>),
-	Infer(u32),
+	Infer(usize),
 	Fn(Vec<Ty<'t>>, Ty<'t>),
 	Kind(Id),
 	Ref(Id, Vec<Ty<'t>>),
