@@ -18,6 +18,7 @@ pub struct GenExpr<'g, 'i: 'g, 'c: 'i> {
 	pub bb: BasicBlockRef,
 	pub map: &'g RefMap<'c>,
 	pub info: Rc<GroupInfo<'c>>,
+	pub vars: HashMap<Id, ValueRef>,
 }
 
 impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
@@ -47,15 +48,16 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 		self.ctx.fixed_ty(ty, self.map)
 	}
 
-	pub fn get_ref(&self, id: Id, map: &RefMap<'c>) -> String {
+	pub fn get_ref(&self, id: Id, map: &RefMap<'c>) -> ValueRef {
 		let new_map = RefMap {
 			params: map.params.iter().map(|(k,v)| (*k, self.fixed_ty(v))).collect()
 		};
 		self.ctx.gen(id, &new_map);
-		self.ctx.mangle(id, &new_map)
+		let s = self.ctx.mangle(id, &new_map);
+		unsafe { llvm::LLVMGetNamedFunction(self.ctx.ll_mod, c_str(&s).as_ptr()) }
 	}
 
-	pub fn expr(&mut self, e: &'c Expr_) -> Option<ValueRef>  {
+	pub fn expr(&mut self, e: &'c Expr_) -> Option<ValueRef> {
 		unsafe {
 			match e.val {
 				Expr::Call(ref obj, ref f_args) => {
@@ -78,7 +80,11 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 					Some(llvm::LLVMBuildAdd(self.builder, l, r, c_str("add").as_ptr()))
 				}
 				Expr::Ref(name, id, ref substs) => {
-					self.get_ref(id, self.info.refs.get(&e.info.id).unwrap());
+					let p = match self.vars.get(&id) {
+						Some(v) => *v,
+						None => self.get_ref(id, self.info.refs.get(&e.info.id).unwrap()),
+					};
+					//Some(llvm::LLVMBuildLoad(self.builder, p, c_str("ref").as_ptr()))
 					None
 				}
 				Expr::Return(ref ret) => {

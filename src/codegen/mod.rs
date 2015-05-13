@@ -169,10 +169,15 @@ impl<'i, 'c> GenContext<'i, 'c> {
 							ctx: &self,
 							def: Some(d),
 							builder: builder,
+							vars: HashMap::new(),
 							bb: entry,
 							map: map,
 							info: info,
 						};
+
+						for i in 0..d.params.len() {
+							gen.vars.insert(d.params[i].info.id, llvm::LLVMGetParam(f, i as libc::c_uint));
+						}
 
 						gen.block(&d.block);
 
