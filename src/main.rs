@@ -5,7 +5,7 @@ extern crate arena;
 #[cfg(test)]
 extern crate quickcheck;
 
-extern crate rustc_llvm;
+extern crate rustc_llvm as llvm;
 
 use std::rc::Rc;
 use std::io::Read;
@@ -23,6 +23,7 @@ mod ty;
 mod detect_return;
 mod infer;
 mod recursion;
+mod codegen;
 
 fn main() {
     let path = std::path::Path::new("test.txt");
