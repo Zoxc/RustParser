@@ -6,8 +6,7 @@ data test
         return b
 
 fn t(test a, b)
-    return a + b
-
+	a = b
 fn main()
 
 fn t1[A](A n, c)
@@ -19,3 +18,6 @@ fn t[T](T a, d)
 
 fn tr(b)
     t(3, b)
+
+fn r()
+    return 1 + 4

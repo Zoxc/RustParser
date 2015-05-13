@@ -2,9 +2,11 @@ use std::collections::{HashMap, HashSet};
 use ast;
 use ast::*;
 use std::rc::Rc;
+use std::ptr;
+use ty;
 use node_map::NodeMap;
 use std::ffi::CString;
-use infer::InferContext;
+use infer::{InferContext, GroupInfo, RefMap};
 use llvm;
 use llvm::{ContextRef, ValueRef, ModuleRef, BasicBlockRef, BuilderRef};
 use codegen::{GenContext, c_str};
@@ -14,6 +16,8 @@ pub struct GenExpr<'g, 'i: 'g, 'c: 'i> {
 	pub def: Option<&'c FnDef>,
 	pub builder: BuilderRef,
 	pub bb: BasicBlockRef,
+	pub map: &'g RefMap<'c>,
+	pub info: Rc<GroupInfo<'c>>,
 }
 
 impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
@@ -39,6 +43,18 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 		}
 	}
 
+	pub fn fixed_ty(&self, ty: ty::Ty<'c>) -> ty::Ty<'c> {
+		self.ctx.fixed_ty(ty, self.map)
+	}
+
+	pub fn get_ref(&self, id: Id, map: &RefMap<'c>) -> String {
+		let new_map = RefMap {
+			params: map.params.iter().map(|(k,v)| (*k, self.fixed_ty(v))).collect()
+		};
+		self.ctx.gen(id, &new_map);
+		self.ctx.mangle(id, &new_map)
+	}
+
 	pub fn expr(&mut self, e: &'c Expr_) -> Option<ValueRef>  {
 		unsafe {
 			match e.val {
@@ -57,11 +73,12 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 					None
 				}
 				Expr::BinOp(ref lhs, _op, ref rhs) => {
-					self.expr(lhs);
-					self.expr(rhs);
-					None
+					let l = self.expr(lhs).unwrap();
+					let r = self.expr(rhs).unwrap();
+					Some(llvm::LLVMBuildAdd(self.builder, l, r, c_str("add").as_ptr()))
 				}
 				Expr::Ref(name, id, ref substs) => {
+					self.get_ref(id, self.info.refs.get(&id).unwrap());
 					None
 				}
 				Expr::Return(ref ret) => {
@@ -73,7 +90,7 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 				}
 				Expr::Num(num) => {
 					let t = llvm::LLVMInt64TypeInContext(self.ctx.ll_ctx);
-					Some(llvm::LLVMConstIntOfString(t, CString::new(self.ctx.infer.src.get_num(num)).unwrap().as_ptr(), 10))
+					Some(llvm::LLVMConstIntOfString(t, c_str(&self.ctx.infer.src.get_num(num)).as_ptr(), 10))
 				}
 				Expr::Break => {
 					None

@@ -19,6 +19,8 @@ pub struct GenContext<'i, 'c: 'i> {
 	infer: &'i InferContext<'c>,
 	ll_ctx: ContextRef,
 	ll_mod: ModuleRef,
+
+	void_ptr: TypeRef,
 }
 
 pub fn c_str(s: &str) -> CString {
@@ -112,7 +114,7 @@ impl<'i, 'c> GenContext<'i, 'c> {
 	}
 
 	pub fn gen(&self, id: Id, map: &RefMap<'c>) {
-		let info = &self.infer.type_map.borrow().get(&id).unwrap().1.clone();
+		let info = self.infer.type_map.borrow().get(&id).unwrap().1.clone();
 		let scheme = &self.infer.type_map.borrow().get(&id).unwrap().0.clone();
 
 		{
@@ -129,16 +131,15 @@ impl<'i, 'c> GenContext<'i, 'c> {
 			Lookup::Item(item) => match item.val {
 				Item::Fn(ref d) => {
 					unsafe {
-						match *self.fixed_ty(scheme.ty, map) {
+						let ty = match *self.fixed_ty(scheme.ty, map) {
 							ty::Ty_::Fn(ref args, ret) => {
-								let vec: Vec<TypeRef> = args.iter().map(|a| self.ll_ty(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
-								
-								llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False);
+								let mut vec: Vec<TypeRef> = args.iter().map(|a| self.ll_ty(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
+								vec.insert(0, self.void_ptr);
+								llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False)
 							}
 							_ => panic!(),
 						};
 
-						let ty = llvm::LLVMFunctionType(llvm::LLVMVoidTypeInContext(self.ll_ctx), ptr::null(), 0, llvm::False);
 						let f =  llvm::LLVMAddFunction(self.ll_mod,
 							c_str(&self.mangle(id, map)).as_ptr(),
 							ty);
@@ -154,6 +155,8 @@ impl<'i, 'c> GenContext<'i, 'c> {
 							def: Some(d),
 							builder: builder,
 							bb: entry,
+							map: map,
+							info: info,
 						};
 
 						gen.block(&d.block);
@@ -186,6 +189,7 @@ unsafe fn make_ctx<'i, 'c>(infer: &'i InferContext<'c>) -> GenContext<'i, 'c> {
 		infer: infer,
 		ll_ctx: llcx,
 		ll_mod: llmod,
+		void_ptr: llvm::LLVMPointerType(llvm::LLVMInt8TypeInContext(llcx), 0),
 	}
 }
 

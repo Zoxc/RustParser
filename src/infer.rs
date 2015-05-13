@@ -362,6 +362,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 		if args.valueness != Valueness::Right {
 			match e.val {
+				Expr::Ref(..) => (),
 				_ => {
 					error!("Invalid l-value");
 					result!(self.ctx.ty_err);
@@ -612,13 +613,13 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		for (_, scheme) in self.tys.iter_mut() {
 			scheme.ty = self.info.vars.inst_ty(self.ctx, scheme.ty, &HashMap::new(), true);
 		}
-
+/*
 		for (_, map) in self.info.refs.iter_mut() {
 			for (_, ty) in map.params.iter_mut() {
 				*ty = self.info.vars.inst_ty(self.ctx, *ty, &HashMap::new(), true);
 			}
 		}
-
+*/
 		(self.info, self.tys)
 	}
 }
