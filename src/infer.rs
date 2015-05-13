@@ -27,14 +27,14 @@ impl Msg {
 }
 
 pub struct RefMap<'c> {
-	params: HashMap<Id, Ty<'c>>,
+	pub params: HashMap<Id, Ty<'c>>,
 }
 
 pub struct InferContext<'c> {
 	pub src: &'c Source,
 	arena: &'c TypedArena<Ty_<'c>>,
 	pub node_map: &'c NodeMap<'c>,
-	type_map: RefCell<HashMap<Id, (Scheme<'c>, Rc<InferInfo<'c>>)>>,
+	pub type_map: RefCell<HashMap<Id, (Scheme<'c>, Rc<GroupInfo<'c>>)>>,
 	recursion_map: HashMap<Id, Rc<Vec<Id>>>,
 	pub parents: HashMap<Id, Id>,
 
@@ -84,12 +84,16 @@ impl Args {
 	}
 }
 
-struct InferInfo<'c> {
-	vars: RefCell<Vec<Ty<'c>>>,
-	refs: HashMap<Id, RefMap<'c>>,
+pub struct GroupInfo<'c> {
+	pub vars: Vars<'c>,
+	pub refs: HashMap<Id, RefMap<'c>>,
 }
 
-impl<'c> InferInfo<'c> {
+pub struct Vars<'c> {
+	pub vars: RefCell<Vec<Ty<'c>>>,
+}
+
+impl<'c> Vars<'c> {
 	fn format_ty_(&self, ctx: &InferContext<'c>, mut ty: Ty<'c>, p: bool) -> String {
 		macro_rules! connect {
 		    ($vec:expr) => {{
@@ -116,7 +120,7 @@ impl<'c> InferInfo<'c> {
 		}
 	}
 
-	fn format_ty(&self, ctx: &InferContext<'c>, mut ty: Ty<'c>) -> String {
+	pub fn format_ty(&self, ctx: &InferContext<'c>, mut ty: Ty<'c>) -> String {
 		self.format_ty_(ctx, ty, false)
 	}
 
@@ -133,16 +137,65 @@ impl<'c> InferInfo<'c> {
 		}
 	}
 
-	fn prune(&self, t: Ty<'c>, ) -> Ty<'c> {
+	pub fn prune(&self, t: Ty<'c>, ) -> Ty<'c> {
 		match *t {
 			Ty_::Infer(var) => self.lookup_var(var),
 			_ => t,
 		}
 	}
+
+	pub fn alloc_ty(&self, ctx: &InferContext<'c>, ty: Ty_<'c>) -> Ty<'c> {
+		alloc_ty(ctx.arena, ty)
+	}
+
+	pub fn inst_ty(&self, ctx: &InferContext<'c>, mut ty: Ty<'c>, params: &HashMap<Id, Ty<'c>>, allow_infer: bool) -> Ty<'c> {
+		macro_rules! map {
+		    ($t:expr) => {self.inst_ty(ctx, $t, params, allow_infer)}
+		}
+
+		macro_rules! map_vec {
+		    ($vec:expr) => {$vec.iter().map(|t| map!(t)).collect()}
+		}
+
+		ty = self.prune(ty);
+
+		match *ty {
+			Ty_::Infer(_) => if allow_infer { ty } else { panic!() },
+			Ty_::Error | Ty_::Int => ty,
+			Ty_::Tuple(ref vec) => self.alloc_ty(ctx, Ty_::Tuple(map_vec!(vec))),
+			Ty_::Fn(ref args, ret) => self.alloc_ty(ctx, Ty_::Fn(map_vec!(args), map!(ret))),
+			Ty_::Kind(id) => {
+				match params.get(&id) {
+					Some(r) => *r,
+					None => ty,
+				}
+			}
+			Ty_::Ref(id, ref substs) => {
+				match params.get(&id) {
+					Some(r) => {
+						match **r {
+							Ty_::Kind(id) => {
+								debug_assert!(!substs.is_empty());
+								self.alloc_ty(ctx, Ty_::Ref(id, map_vec!(substs)))
+							}
+							_ => {
+								debug_assert!(substs.is_empty());
+								*r
+							}
+						} 
+					}
+					None => self.alloc_ty(ctx, Ty_::Ref(id, map_vec!(substs))),
+				}
+			}
+			Ty_::Proj(id, ref substs, sub) => self.alloc_ty(ctx, Ty_::Proj(id, map_vec!(substs), sub)),
+			Ty_::Ptr(p) => self.alloc_ty(ctx, Ty_::Ptr(map!(p))),
+		}
+	}
+
 }
 
 struct InferGroup<'ctx, 'c: 'ctx> {
-	info: InferInfo<'c>,
+	info: GroupInfo<'c>,
 	tys: HashMap<Id, Scheme<'c>>,
 	ctx: &'ctx InferContext<'c>,
 }
@@ -169,90 +222,18 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	}
 
 	fn new_var(&mut self) -> Ty<'c> {
-		let r = self.info.vars.borrow().len() as u32;
+		let r = self.info.vars.vars.borrow().len() as u32;
 		let t = self.alloc_ty(Ty_::Infer(r));
-		self.info.vars.borrow_mut().push(t);
+		self.info.vars.vars.borrow_mut().push(t);
 		t
 	}
-/*
-	fn ty_eq(&self, mut a: Ty<'c>, mut b: Ty<'c>) -> bool {
-		a = self.prune(a);
-		b = self.prune(b);
 
-		macro_rules! arg_match {
-		    ($la:expr, $ra:expr) => {{
-		    	let l_args = &$la[..];
-		    	let r_args = &$ra[..];
-				if l_args.len() != r_args.len() {
-					false
-				} else {
-					l_args.iter().zip(r_args.iter()).all(|(l, r)| { self.ty_eq(l, r) })
-				}
-		    }}
-		}
-
-		match (a, b) {
-			(&Ty_::Error, _) => true,
-			(_, &Ty_::Error) => true,
-
-			(&Ty_::Infer(a), &Ty_::Infer(b)) => a == b,
-
-			(&Ty_::Int, &Ty_::Int) => true,
-			(&Ty_::Tuple(ref la), &Ty_::Tuple(ref ra)) => arg_match!(la, ra),
-			(&Ty_::Kind(a), &Ty_::Kind(b)) =>  a == b,
-			(&Ty_::Ref(a, ref la), &Ty_::Ref(b, ref ra)) => a == b && arg_match!(la, ra),
-			(&Ty_::Proj(a, ref la, ls), &Ty_::Proj(b, ref ra, rs)) => a == b && ls == rs && arg_match!(la, ra),
-			(&Ty_::Fn(ref la, lr), &Ty_::Fn(ref ra, rr)) => self.ty_eq(lr, rr) && arg_match!(la, ra),
-			(&Ty_::Ptr(lp), &Ty_::Ptr(rp)) => self.ty_eq(lp, rp),
-			_ => false,
-		}
-	}
-*/
 	fn inst_ty(&self, mut ty: Ty<'c>, params: &HashMap<Id, Ty<'c>>) -> Ty<'c> {
-		macro_rules! map {
-		    ($t:expr) => {self.inst_ty($t, params)}
-		}
-
-		macro_rules! map_vec {
-		    ($vec:expr) => {$vec.iter().map(|t| map!(t)).collect()}
-		}
-
-		ty = self.prune(ty);
-
-		match *ty {
-			Ty_::Error | Ty_::Int | Ty_::Infer(_)  => ty,
-			Ty_::Tuple(ref vec) => self.alloc_ty(Ty_::Tuple(map_vec!(vec))),
-			Ty_::Fn(ref args, ret) => self.alloc_ty(Ty_::Fn(map_vec!(args), map!(ret))),
-			Ty_::Kind(id) => {
-				match params.get(&id) {
-					Some(r) => *r,
-					None => ty,
-				}
-			}
-			Ty_::Ref(id, ref substs) => {
-				match params.get(&id) {
-					Some(r) => {
-						match **r {
-							Ty_::Kind(id) => {
-								debug_assert!(!substs.is_empty());
-								self.alloc_ty(Ty_::Ref(id, map_vec!(substs)))
-							}
-							_ => {
-								debug_assert!(substs.is_empty());
-								*r
-							}
-						} 
-					}
-					None => self.alloc_ty(Ty_::Ref(id, map_vec!(substs))),
-				}
-			}
-			Ty_::Proj(id, ref substs, sub) => self.alloc_ty(Ty_::Proj(id, map_vec!(substs), sub)),
-			Ty_::Ptr(p) => self.alloc_ty(Ty_::Ptr(map!(p))),
-		}
+		self.info.vars.inst_ty(self.ctx, ty, params, true)
 	}
 
 	fn format_ty(&self, mut ty: Ty<'c>) -> String {
-		self.info.format_ty(self.ctx, ty)
+		self.info.vars.format_ty(self.ctx, ty)
 	}
 
 	fn infer_generics(&mut self, generics: &'c Generics, value: bool, ty: Ty<'c>) -> Scheme<'c> {
@@ -273,7 +254,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	}
 
 	fn prune(&self, t: Ty<'c>, ) -> Ty<'c> {
-		self.info.prune(t)
+		self.info.vars.prune(t)
 	}
 
 	fn unify(&mut self, sp: Span, mut l: Ty<'c>, mut r: Ty<'c>) {
@@ -304,7 +285,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 					return;
 				}
 
-				self.info.vars.borrow_mut()[v as usize] = r;
+				self.info.vars.vars.borrow_mut()[v as usize] = r;
 				return
 			}
 			(_, &Ty_::Infer(v)) => return self.unify(sp, r, l),
@@ -469,7 +450,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			}
 		}
 
-		self.print(e.info.span, &format!("expr({}) of type {}", e.info.id.0, self.format_ty(result.unwrap())));
+		//self.print(e.info.span, &format!("expr({}) of type {}", e.info.id.0, self.format_ty(result.unwrap())));
 	}
 
 	fn infer_block(&mut self, args: Args, b: &'c Block_<Expr_>, result: Option<Ty<'c>>) {
@@ -590,7 +571,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 	}
 
-	fn infer_group(mut self, ids: Vec<Id>) -> (InferInfo<'c>, HashMap<Id, Scheme<'c>>) {
+	fn infer_group(mut self, ids: Vec<Id>) -> (GroupInfo<'c>, HashMap<Id, Scheme<'c>>) {
 		for id in ids.iter() {
 			let scheme = match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item_shallow(item),
@@ -616,6 +597,12 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			self.print(span, &format!("item({}) {} :: {}", id.0, self.ctx.path(*id), self.format_ty(ty)));
 		}
 
+		for (_, map) in self.info.refs.iter_mut() {
+			for (_, ty) in map.params.iter_mut() {
+				*ty = self.info.vars.inst_ty(self.ctx, *ty, &HashMap::new(), true);
+			}
+		}
+
 		(self.info, self.tys)
 	}
 }
@@ -629,8 +616,10 @@ impl<'c> InferContext<'c> {
 		let def = &[id];
 		let ids = self.recursion_map.get(&id).map(|r| &r[..]).unwrap_or(def).to_vec();
 		let mut group = InferGroup {
-			info: InferInfo {
-				vars: RefCell::new(Vec::new()),
+			info: GroupInfo {
+				vars: Vars {
+					vars: RefCell::new(Vec::new())
+				},
 				refs: HashMap::new(),
 			},
 			tys: HashMap::new(),
@@ -646,7 +635,7 @@ impl<'c> InferContext<'c> {
 		self.infer_id(id)
 	}
 
-	fn info(&self, id: Id) -> (String, Span) {
+	pub fn info(&self, id: Id) -> (String, Span) {
 		let (ident, span) = match *self.node_map.get(&id).unwrap() {
 			Lookup::Item(item) => (match item.val {
 				Item::Fn(ref d) => d.name,
@@ -659,7 +648,7 @@ impl<'c> InferContext<'c> {
 		(self.src.get_name(ident.0.val), span)
 	}
 
-	fn path(&self, id: Id) -> String {
+	pub fn path(&self, id: Id) -> String {
 		match self.parents.get(&id) {
 			Some(p) => format!("{}.{}", self.path(*p), self.info(id).0),
 			_ => self.info(id).0,
@@ -700,5 +689,7 @@ pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<
 	let mut pass = InferPass { ctx: &ctx };
 	pass.visit_item_block(block);
 
+    println!("generating code...");
+    
     codegen::run(block, &ctx);
 }

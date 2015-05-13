@@ -3,8 +3,11 @@ use ast;
 use ast::*;
 use std::rc::Rc;
 use node_map::NodeMap;
+use std::cell::RefCell;
 use std::ffi::CString;
-use infer::InferContext;
+use ty;
+use infer;
+use infer::{InferContext, RefMap};
 use std::ptr;
 use llvm;
 use llvm::{ContextRef, ValueRef, ModuleRef};
@@ -22,29 +25,105 @@ pub fn c_str(s: &str) -> CString {
 }
 
 impl<'i, 'c> GenContext<'i, 'c> {
-	pub fn mangle(&self, id: Id) {
+	pub fn fixed_ty(&self, ty: ty::Ty<'c>, map: &RefMap<'c>) -> ty::Ty<'c> {
+
+		let info = infer::Vars {
+			vars: RefCell::new(Vec::new()),
+		};
+
+		info.inst_ty(self.infer, ty, &map.params, false)
 	}
-	pub fn gen_id(&self, id: Id) {
+
+	pub fn mangle_ty(&self, ty: ty::Ty<'c>, map: &RefMap<'c>) -> String {
+		/*match *ty {
+			Ty_::Error | Ty_::Infer(_) => panic!(),
+			Ty_::Int => format!("int"),
+			Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
+			Ty_::Fn(ref args, ret) => if p {
+				format!("(({}) -> {})", connect!(args), self.format_ty_(ctx, ret, true))
+			} else {
+				format!("({}) -> {}", connect!(args), self.format_ty_(ctx, ret, true))
+			},
+			Ty_::Kind(_) => format!("kind"),
+			Ty_::Ref(i, ref substs) => format!("{}[{}]", ctx.path(i), connect!(substs)),
+			Ty_::Proj(_, ref substs, _) => format!("proj[{}]", connect!(substs)),
+			Ty_::Ptr(p) => format!("{}*", self.format_ty(ctx, p)),
+		}
+		let scheme = &self.infer.type_map.borrow().get(&id).unwrap().0.clone();
+
+		if scheme.params.is_empty() {
+			"".to_string()
+		} else {
+			let vec: Vec<String> = scheme.params.iter().map(|p| self.mangle_ty(map.get(&p.id), map)).collect();
+		    format!("[{}]", vec.connect(", "))
+		}
+
+		let name = mangle_name(id, map);
+		match self.infer.parents.get(&id) {
+			Some(p) => format!("{}.{}", self.mangle_(*p, map), name),
+			_ => name,
+		}*/
+		"ty".to_string()
+	}
+
+	pub fn mangle_name(&self, id: Id, map: &RefMap<'c>) -> String {
+		let scheme = &self.infer.type_map.borrow().get(&id).unwrap().0.clone();
+
+		let params = if scheme.params.is_empty() {
+			"".to_string()
+		} else {
+			let vec: Vec<String> = scheme.params.iter().map(|p| self.mangle_ty(map.params.get(&p.id).unwrap(), map)).collect();
+		    format!("[{}]", vec.connect(", "))
+		};
+
+		format!("{}{}", self.infer.info(id).0, params)
+	}
+
+	pub fn mangle_(&self, id: Id, map: &RefMap<'c>) -> String {
+		let name = self.mangle_name(id, map);
+		match self.infer.parents.get(&id) {
+			Some(p) => format!("{}.{}", self.mangle_(*p, map), name),
+			_ => name,
+		}
+	}
+
+	pub fn mangle(&self, id: Id, map: &RefMap<'c>) -> String {
+		format!("_{}", self.mangle_(id, map))
+	}
+
+	pub fn gen(&self, id: Id, map: &RefMap<'c>) {
+		let info = &self.infer.type_map.borrow().get(&id).unwrap().1.clone();
+
+		{
+
+			let p = map.params.iter().map(|(k,v)| format!("{}: {}, ", self.infer.path(*k), info.vars.format_ty(self.infer, v))).fold(String::new(), |mut a, b| {
+		        a.push_str(&b);
+		        a
+		    });
+
+			println!("gen {} map {{{}}}", self.infer.path(id), p);
+		}
+
 		match *self.infer.node_map.get(&id).unwrap() {
 			Lookup::Item(item) => match item.val {
 				Item::Fn(ref d) => {
 					unsafe {
 						let ty = llvm::LLVMFunctionType(llvm::LLVMVoidTypeInContext(self.ll_ctx), ptr::null(), 0, llvm::False);
 						let f =  llvm::LLVMAddFunction(self.ll_mod,
-							c_str(&self.infer.src.get_name(d.name.0.val)).as_ptr(),
+							c_str(&self.mangle(id, map)).as_ptr(),
 							ty);
 
-						let e = llvm::LLVMAppendBasicBlockInContext(self.ll_ctx, f, c_str("entry").as_ptr());
+						let entry = llvm::LLVMAppendBasicBlockInContext(self.ll_ctx, f, c_str("entry").as_ptr());
 
 						let builder = llvm::LLVMCreateBuilderInContext(self.ll_ctx);
 
-						llvm::LLVMPositionBuilderAtEnd(builder, e);
+						llvm::LLVMPositionBuilderAtEnd(builder, entry);
 
 						let gen = expr::GenExpr {
 							ctx: &self,
 							def: Some(d),
 							builder: builder,
-							bb: e,
+							bb: entry,
 						};
 
 						gen.block(&d.block);
@@ -90,7 +169,7 @@ impl<'a, 'ctx, 'c> Visitor<'c> for GenPass<'a, 'ctx, 'c> {
 	}
 
 	fn visit_item(&mut self, val: &'c Item_) {
-		self.ctx.gen_id(val.info.id);
+		self.ctx.gen(val.info.id, &RefMap { params: HashMap::new() });
 		ast::visit::visit_item(self, val);
 	}
 }
