@@ -26,12 +26,17 @@ impl Msg {
 	}
 }
 
+pub struct RefMap<'c> {
+	params: HashMap<Id, Ty<'c>>,
+}
+
 pub struct InferContext<'c> {
 	pub src: &'c Source,
 	arena: &'c TypedArena<Ty_<'c>>,
 	pub node_map: &'c NodeMap<'c>,
 	type_map: RefCell<HashMap<Id, (Scheme<'c>, Rc<InferInfo<'c>>)>>,
 	recursion_map: HashMap<Id, Rc<Vec<Id>>>,
+	pub parents: HashMap<Id, Id>,
 
 	ty_err: Ty<'c>,
 	ty_int: Ty<'c>,
@@ -81,6 +86,7 @@ impl Args {
 
 struct InferInfo<'c> {
 	vars: RefCell<Vec<Ty<'c>>>,
+	refs: HashMap<Id, RefMap<'c>>,
 }
 
 impl<'c> InferInfo<'c> {
@@ -104,7 +110,7 @@ impl<'c> InferInfo<'c> {
 				format!("({}) -> {}", connect!(args), self.format_ty_(ctx, ret, true))
 			},
 			Ty_::Kind(_) => format!("kind"),
-			Ty_::Ref(i, ref substs) => format!("{}[{}]", ctx.info(i).0, connect!(substs)),
+			Ty_::Ref(i, ref substs) => format!("{}[{}]", ctx.path(i), connect!(substs)),
 			Ty_::Proj(_, ref substs, _) => format!("proj[{}]", connect!(substs)),
 			Ty_::Ptr(p) => format!("{}*", self.format_ty(ctx, p)),
 		}
@@ -202,9 +208,9 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 	}
 */
-	fn inst_ty<P: Fn(Id) -> Option<Ty<'c>>>(&self, mut ty: Ty<'c>, param: &P) -> Ty<'c> {
+	fn inst_ty(&self, mut ty: Ty<'c>, params: &HashMap<Id, Ty<'c>>) -> Ty<'c> {
 		macro_rules! map {
-		    ($t:expr) => {self.inst_ty($t, param)}
+		    ($t:expr) => {self.inst_ty($t, params)}
 		}
 
 		macro_rules! map_vec {
@@ -218,22 +224,22 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			Ty_::Tuple(ref vec) => self.alloc_ty(Ty_::Tuple(map_vec!(vec))),
 			Ty_::Fn(ref args, ret) => self.alloc_ty(Ty_::Fn(map_vec!(args), map!(ret))),
 			Ty_::Kind(id) => {
-				match param(id) {
-					Some(r) => r,
+				match params.get(&id) {
+					Some(r) => *r,
 					None => ty,
 				}
 			}
 			Ty_::Ref(id, ref substs) => {
-				match param(id) {
+				match params.get(&id) {
 					Some(r) => {
-						match *r {
+						match **r {
 							Ty_::Kind(id) => {
 								debug_assert!(!substs.is_empty());
 								self.alloc_ty(Ty_::Ref(id, map_vec!(substs)))
 							}
 							_ => {
 								debug_assert!(substs.is_empty());
-								r
+								*r
 							}
 						} 
 					}
@@ -328,7 +334,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		match ty.val {
 			ast::Ty::Infer => self.new_var(),
 			ast::Ty::Ref(_, id, ref substs) => {
-				match self.infer_id(ty.info.span, id, substs) {
+				match self.infer_id(ty.info, id, substs) {
 					Level::Type(v) => v,
 					_ => {
 						self.error(ty.info.span, format!("Expected a type"));
@@ -430,7 +436,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				self.infer(args.next(), rhs, r);
 			}
 			Expr::Ref(name, id, ref substs) => {
-				result!(self.infer_value(e.info.span, id, substs));
+				result!(self.infer_value(e.info, id, substs));
 			}
 			Expr::Return(ref ret) => {
 				let r = match *self.tys.get(&args.node).unwrap().ty {
@@ -480,17 +486,17 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		};
 	}
 
-	fn infer_value(&mut self, sp: Span, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Ty<'c> {
-		match self.infer_id(sp, id, substs) {
+	fn infer_value(&mut self, info: Info, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Ty<'c> {
+		match self.infer_id(info, id, substs) {
 			Level::Value(v) => v,
 			_ => {
-				self.error(sp, format!("Expected a value"));
+				self.error(info.span, format!("Expected a value"));
 				self.ctx.ty_err
 			}
 		}
 	}
 
-	fn infer_id(&mut self, sp: Span, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Level<'c> {
+	fn infer_id(&mut self, info: Info, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Level<'c> {
 		let scheme = match self.tys.get(&id) {
 			Some(t) => t.clone(),
 			None => {
@@ -508,7 +514,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		match *substs {
 			Some(ref substs) => {
 				if substs.len() != scheme.params.len() {
-					self.error(sp, format!("{} has {} type parameters, but {} was given", self.name(id), scheme.params.len(), substs.len()));
+					self.error(info.span, format!("{} has {} type parameters, but {} was given", self.ctx.path(id), scheme.params.len(), substs.len()));
 					return err;
 				}
 				for (sub, param) in substs.iter().zip(scheme.params.iter()) {
@@ -522,17 +528,21 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			}
 		}
 
-		let param = |id| param_map.get(&id).map(|t| *t);
-
 		// DEBUG
-		let p = param_map.iter().map(|(k,v)| format!("{}: {}, ", self.name(*k), self.format_ty(v))).fold(String::new(), |mut a, b| {
+		let p = param_map.iter().map(|(k,v)| format!("{}: {}, ", self.ctx.path(*k), self.format_ty(v))).fold(String::new(), |mut a, b| {
 	        a.push_str(&b);
 	        a
 	    });
 
 		//self.print(sp, &format!("ref({}) map {}", id.0, p));
 
-		let ty = self.inst_ty(scheme.ty, &param);
+		let ty = self.inst_ty(scheme.ty, &param_map);
+
+	    let map = RefMap {
+	    	params: param_map,
+	    };
+
+	    self.info.refs.insert(info.id, map);
 
 		if scheme.value {
 			Level::Value(ty)
@@ -603,7 +613,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		for id in ids.iter() {
 			let ty = self.tys.get(id).unwrap().ty;
 			let (name, span) = self.ctx.info(*id);
-			self.print(span, &format!("item({}) {} :: {}", id.0, name, self.format_ty(ty)));
+			self.print(span, &format!("item({}) {} :: {}", id.0, self.ctx.path(*id), self.format_ty(ty)));
 		}
 
 		(self.info, self.tys)
@@ -620,7 +630,8 @@ impl<'c> InferContext<'c> {
 		let ids = self.recursion_map.get(&id).map(|r| &r[..]).unwrap_or(def).to_vec();
 		let mut group = InferGroup {
 			info: InferInfo {
-				vars: RefCell::new(Vec::new())
+				vars: RefCell::new(Vec::new()),
+				refs: HashMap::new(),
 			},
 			tys: HashMap::new(),
 			ctx: self,
@@ -647,6 +658,13 @@ impl<'c> InferContext<'c> {
 		};
 		(self.src.get_name(ident.0.val), span)
 	}
+
+	fn path(&self, id: Id) -> String {
+		match self.parents.get(&id) {
+			Some(p) => format!("{}.{}", self.path(*p), self.info(id).0),
+			_ => self.info(id).0,
+		}
+	}
 } 
 
 struct InferPass<'ctx, 'c: 'ctx> {
@@ -664,7 +682,7 @@ impl<'ctx, 'c> Visitor<'c> for InferPass<'ctx, 'c> {
 	}
 }
 
-pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<'c>) {
+pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<'c>, parents: HashMap<Id, Id>) {
 	let arena = TypedArena::new();
 	let ctx = InferContext {
 		src: src,
@@ -672,6 +690,7 @@ pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<
 		node_map: node_map,
 		type_map: RefCell::new(HashMap::new()),
 		recursion_map: recursion::run(block, node_map),
+		parents: parents,
 
 		ty_err: alloc_ty(&arena, Ty_::Error),
 		ty_int: alloc_ty(&arena, Ty_::Int),

@@ -42,7 +42,7 @@ fn main() {
         return;
     }
 
-    resolution::run(&src, &mut ast);
+    let parents = resolution::run(&src, &mut ast);
 
     if src.has_msgs() {
         print!("{}", src.format_msgs());
@@ -53,7 +53,7 @@ fn main() {
 
     println!("inferring...");
     
-    infer::run(&src, &ast, &map);
+    infer::run(&src, &ast, &map, parents);
 
 	print!("{}", src.format_msgs());
 }

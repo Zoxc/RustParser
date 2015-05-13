@@ -1,10 +1,14 @@
 use misc::{Source, Msg};
 use ast::*;
+use std::collections::HashMap;
+use std::cell::RefCell;
 
 struct ResolutionPass<'c> {
 	declare: bool,
 	src: &'c Source,
+	id: Option<Id>,
 	parent: Option<&'c ResolutionPass<'c>>,
+	parents: &'c RefCell<HashMap<Id, Id>>,
 	symbols: &'c mut SymbolTable,
 }
 
@@ -20,6 +24,7 @@ impl<'c> ResolutionPass<'c> {
 
 	fn name(&mut self, id: Id, ident: Ident) {
 		if self.declare {
+			self.id.map(|parent| self.parents.borrow_mut().insert(id, parent));
 			self.symbols.name(id, ident);
 		}
 	}
@@ -30,8 +35,8 @@ impl<'c> ResolutionPass<'c> {
 		}
 	}
 
-	fn wrap(&'c self, symbols: &'c mut SymbolTable) -> ResolutionPass<'c> {
-		ResolutionPass { declare: self.declare, src: self.src, parent: Some(&self), symbols: symbols }
+	fn wrap(&'c self, symbols: &'c mut SymbolTable, id: Id) -> ResolutionPass<'c> {
+		ResolutionPass { declare: self.declare, src: self.src, id: Some(id), parent: Some(&self), parents: self.parents, symbols: symbols }
 	}
 
 	fn item(&mut self, val: &mut Item_) {
@@ -39,13 +44,13 @@ impl<'c> ResolutionPass<'c> {
 			Item::Data(i, ref mut g, ref mut b) => {
 				self.name(val.info.id, i);
 
-				let mut pass = self.wrap(&mut b.val.symbols);
+				let mut pass = self.wrap(&mut b.val.symbols, val.info.id);
 				pass.items(&mut b.val.vals);
 				pass.generics(g);
 			}
 			Item::Fn(ref mut def) => {
 				self.name(val.info.id, def.name);
-				let mut pass = self.wrap(&mut def.block.val.symbols);
+				let mut pass = self.wrap(&mut def.block.val.symbols, val.info.id);
 				pass.generics(&mut def.generics);
 				for param in def.params.iter_mut() {
 					pass.name(param.info.id, param.val.0);
@@ -115,7 +120,7 @@ impl<'c> ResolutionPass<'c> {
 	}
 
 	fn expr_block(&mut self, block: &mut Block_<Expr_>) {
-		let mut pass = self.wrap(&mut block.val.symbols);
+		let mut pass = self.wrap(&mut block.val.symbols, self.id.unwrap());
 		pass.exprs(&mut block.val.vals);
 	}
 
@@ -132,13 +137,17 @@ impl<'c> ResolutionPass<'c> {
 	}
 }
 
-pub fn run(src: &Source, block: &mut Block_<Item_>) {
+pub fn run(src: &Source, block: &mut Block_<Item_>) -> HashMap<Id, Id> {
+	let parents = RefCell::new(HashMap::new());
+
 	{
-		let mut declare_pass = ResolutionPass { declare: true, src: src, parent: None, symbols: &mut block.val.symbols };
+		let mut declare_pass = ResolutionPass { declare: true, src: src, id: None, parent: None, parents: &parents, symbols: &mut block.val.symbols };
 		declare_pass.items(&mut block.val.vals);
 	}
 	{
-		let mut lookup_pass = ResolutionPass { declare: false, src: src, parent: None, symbols: &mut block.val.symbols };
+		let mut lookup_pass = ResolutionPass { declare: false, src: src, id: None, parent: None, parents: &parents, symbols: &mut block.val.symbols };
 		lookup_pass.items(&mut block.val.vals);
 	}
+
+	parents.into_inner()
 }
