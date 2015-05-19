@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct SymbolTable {
-	map: HashMap<Name, Id>,
+	pub map: HashMap<Name, Id>,
 }
 
 impl SymbolTable {

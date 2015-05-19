@@ -41,15 +41,21 @@ impl<'i, 'c> GenContext<'i, 'c> {
 	pub fn ll_ty(&self, ty: ty::Ty<'c>) -> Option<TypeRef> {
 		unsafe {
 			match *ty {
-				ty::Ty_::Error | ty::Ty_::Infer(_) | ty::Ty_::Proj(_, _, _) => panic!(),
+				ty::Ty_::Error | ty::Ty_::Infer(..) | ty::Ty_::Proj(..)  | ty::Ty_::Kind(..) => panic!(),
 				ty::Ty_::Tuple(ref args) => if args.is_empty() {
 					None
 				} else {
 					Some(llvm::LLVMInt64TypeInContext(self.ll_ctx))
 				},
 				ty::Ty_::Ptr(p) => self.ll_ty(p).map(|l| llvm::LLVMPointerType(l, 0)),
-				ty::Ty_::Bool => Some(self.i1),
-				_ => Some(llvm::LLVMInt64TypeInContext(self.ll_ctx)),
+				ty::Ty_::Fn(ref args, ret) => {
+					let mut vec: Vec<TypeRef> = args.iter().map(|a| self.ll_ty(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
+					vec.insert(0, self.void_ptr);
+					Some(llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False))
+				}
+				ty::Ty_::Ref(id, _) if id == self.infer.id_bool => Some(self.i1),
+				ty::Ty_::Ref(id, _) if id == self.infer.id_int => Some(llvm::LLVMInt64TypeInContext(self.ll_ctx)),
+				ty::Ty_::Ref(..) => Some(self.i1),
 			}
 		}
 	}
@@ -73,8 +79,6 @@ impl<'i, 'c> GenContext<'i, 'c> {
 
 		match *ty {
 			ty::Ty_::Error | ty::Ty_::Infer(_) | ty::Ty_::Proj(_, _, _) => panic!(),
-			ty::Ty_::Int => format!("int"),
-			ty::Ty_::Bool => format!("bool"),
 			ty::Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
 			ty::Ty_::Fn(ref args, ret) => format!("(({}) -> {})", connect!(args), self.mangle_ty(ret, map)),
 			ty::Ty_::Kind(_) => format!("kind"),

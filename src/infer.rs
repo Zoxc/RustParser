@@ -39,6 +39,9 @@ pub struct InferContext<'c> {
 	recursion_map: HashMap<Id, Rc<Vec<Id>>>,
 	pub parents: HashMap<Id, Id>,
 
+	pub id_int: Id,
+	pub id_bool: Id,
+
 	ty_err: Ty<'c>,
 	ty_int: Ty<'c>,
 	ty_bool: Ty<'c>,
@@ -108,8 +111,6 @@ impl<'c> Vars<'c> {
 		ty = self.prune(ty);
 		match *ty {
 			Ty_::Error => format!("<error>"),
-			Ty_::Int => format!("int"),
-			Ty_::Bool => format!("bool"),
 			Ty_::Infer(i) => format!("λ{}", i),
 			Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
 			Ty_::Fn(ref args, ret) => if p {
@@ -165,7 +166,7 @@ impl<'c> Vars<'c> {
 
 		match *ty {
 			Ty_::Infer(_) => if allow_infer { ty } else { panic!() },
-			Ty_::Error | Ty_::Int | Ty_::Bool => ty,
+			Ty_::Error => ty,
 			Ty_::Tuple(ref vec) => self.alloc_ty(ctx, Ty_::Tuple(map_vec!(vec))),
 			Ty_::Fn(ref args, ret) => self.alloc_ty(ctx, Ty_::Fn(map_vec!(args), map!(ret))),
 			Ty_::Kind(id) => {
@@ -296,8 +297,6 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			}
 			(_, &Ty_::Infer(v)) => return self.unify(sp, r, l),
 
-			(&Ty_::Int, &Ty_::Int) => true,
-			(&Ty_::Bool, &Ty_::Bool) => true,
 			(&Ty_::Tuple(ref la), &Ty_::Tuple(ref ra)) => arg_match!(la, ra),
 			(&Ty_::Kind(a), &Ty_::Kind(b)) => a == b,
 			(&Ty_::Ref(a, ref la), &Ty_::Ref(b, ref ra)) => a == b && arg_match!(la, ra),
@@ -712,6 +711,10 @@ impl<'ctx, 'c> Visitor<'c> for InferPass<'ctx, 'c> {
 
 pub fn run<'c>(ctx: &'c Context, node_map: &'c NodeMap<'c>, parents: HashMap<Id, Id>) {
 	let arena = TypedArena::new();
+
+	let id_int = ctx.get_core("int");
+	let id_bool = ctx.get_core("bool");
+
 	let ctx = InferContext {
 		ctx: ctx,
 		arena: &arena,
@@ -720,9 +723,12 @@ pub fn run<'c>(ctx: &'c Context, node_map: &'c NodeMap<'c>, parents: HashMap<Id,
 		recursion_map: recursion::run(ctx, node_map),
 		parents: parents,
 
+		id_int: id_int,
+		id_bool: id_bool,
+
 		ty_err: alloc_ty(&arena, Ty_::Error),
-		ty_int: alloc_ty(&arena, Ty_::Int),
-		ty_bool: alloc_ty(&arena, Ty_::Bool),
+		ty_int: alloc_ty(&arena, Ty_::Ref(id_int, Vec::new())),
+		ty_bool: alloc_ty(&arena, Ty_::Ref(id_bool, Vec::new())),
 		ty_unit: alloc_ty(&arena, Ty_::Tuple(Vec::new())),
 	};
 

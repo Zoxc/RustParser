@@ -7,7 +7,7 @@ use lexer;
 use infer;
 use lexer::Span;
 use interner::{Val, Interner};
-use ast::{Id, Block_, Item_};
+use ast::{Ident, Id, Block_, Item_};
 
 macro_rules! intern_type {
     ($n:ident) => {
@@ -190,6 +190,10 @@ impl Context {
 			}
 		}
 		panic!("Span without source");
+	}
+
+	pub fn get_core(&self, name: &str) -> Id {
+		*self.srcs[0].ast.as_ref().unwrap().val.symbols.map.get(&self.interners.name.intern(name)).unwrap()
 	}
 }
 
