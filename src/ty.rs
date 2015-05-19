@@ -6,6 +6,7 @@ pub type Ty<'t> = &'t Ty_<'t>;
 pub enum Ty_<'t> {
 	Error,
 	Int,
+	Bool,
 	Tuple(Vec<Ty<'t>>),
 	Infer(usize),
 	Fn(Vec<Ty<'t>>, Ty<'t>),
@@ -28,7 +29,7 @@ impl<'t> Ty_<'t> {
 
 		match *t {
 			Ty_::Infer(v) if v == s => true,
-			Ty_::Error | Ty_::Int | Ty_::Infer(_) | Ty_::Kind(_) => false,
+			Ty_::Error | Ty_::Int | Ty_::Bool | Ty_::Infer(_) | Ty_::Kind(_) => false,
 			Ty_::Tuple(ref vec) => self.occurs_in_list(&vec[..]),
 			Ty_::Fn(ref args, ret) => self.occurs_in_list(&args[..]) || self.occurs_in(ret),
 			Ty_::Ref(_, ref substs) => self.occurs_in_list(&substs[..]),

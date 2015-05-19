@@ -4,11 +4,13 @@ use ast::*;
 use std::rc::Rc;
 use std::ptr;
 use ty;
+use misc::interned::*;
 use node_map::NodeMap;
 use std::ffi::CString;
+use libc::{c_uint, c_ulonglong};
 use infer::{InferContext, GroupInfo, RefMap};
 use llvm;
-use llvm::{ContextRef, ValueRef, ModuleRef, BasicBlockRef, BuilderRef};
+use llvm::{TypeRef, ContextRef, ValueRef, ModuleRef, BasicBlockRef, BuilderRef};
 use codegen::{GenContext, c_str};
 
 pub struct GenExpr<'g, 'i: 'g, 'c: 'i> {
@@ -17,17 +19,24 @@ pub struct GenExpr<'g, 'i: 'g, 'c: 'i> {
 	pub builder: BuilderRef,
 	pub bb: BasicBlockRef,
 	pub map: &'g RefMap<'c>,
+	pub func: ValueRef,
 	pub info: Rc<GroupInfo<'c>>,
 	pub vars: HashMap<Id, ValueRef>,
+	pub post_loop: Option<BasicBlockRef>,
 }
 
 impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
-	pub fn bb(&mut self, s: &str) -> BasicBlockRef {
+	pub fn new_bb(&mut self, s: &str) -> BasicBlockRef {
 		unsafe {
-			let old = self.bb;
-			self.bb =  llvm::LLVMInsertBasicBlockInContext(self.ctx.ll_ctx, self.bb, c_str(s).as_ptr());
-			llvm::LLVMPositionBuilderAtEnd(self.builder, self.bb);
-			old
+			llvm::LLVMAppendBasicBlockInContext(self.ctx.ll_ctx, self.func, c_str(s).as_ptr())
+		}
+	}
+
+	pub fn use_bb(&mut self, b: BasicBlockRef) {
+		unsafe {
+			llvm::LLVMMoveBasicBlockAfter(b, self.bb);
+			self.bb = b;
+			llvm::LLVMPositionBuilderAtEnd(self.builder, b);
 		}
 	}
 
@@ -45,7 +54,11 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 	}
 
 	pub fn fixed_ty(&self, ty: ty::Ty<'c>) -> ty::Ty<'c> {
-		self.ctx.fixed_ty(ty, self.map)
+		self.ctx.fixed_ty(ty, (self.map, &self.info.vars))
+	}
+
+	pub fn ll_ty(&self, ty: ty::Ty<'c>) -> Option<TypeRef> {
+		self.ctx.ll_ty(self.fixed_ty(ty))
 	}
 
 	pub fn get_ref(&self, id: Id, map: &RefMap<'c>) -> ValueRef {
@@ -66,13 +79,58 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 					None
 				}
 				Expr::Loop(ref b) => {
+					let bb = self.new_bb("loop");
+					llvm::LLVMBuildBr(self.builder, bb);
+					self.use_bb(bb);
+					let old_post = self.post_loop;
+					let post_loop = self.new_bb("post-loop");
+					self.post_loop = Some(post_loop);
 					self.block(b);
+					llvm::LLVMBuildBr(self.builder, bb);
+					self.use_bb(post_loop);
+					self.post_loop = old_post;
 					None
 				}
-				Expr::Assign(_op, ref lhs, ref rhs) => {
-					self.expr(lhs);
-					self.expr(rhs);
-					None
+				Expr::Assign(op, ref lhs, ref rhs) => {
+					if op == OP_EQ {
+						let l = self.expr(lhs);
+						let r = self.expr(rhs);
+						Some(match l {
+							Some(lv) => {
+								llvm::LLVMBuildICmp(self.builder, llvm::IntEQ as c_uint, lv, r.unwrap(), c_str("eq").as_ptr())
+							}
+							None => llvm::LLVMConstInt(self.ctx.i1, 1 as c_ulonglong, llvm::False)
+						})
+					} else {
+						self.expr(lhs);
+						self.expr(rhs);
+						None
+					}
+				}
+				Expr::If(ref cond, ref then, ref or) => {
+					let c = self.expr(cond).unwrap();
+					let then_bb = self.new_bb("then");
+					let else_bb = self.new_bb("else");
+					//llvm::LLVMBuildCondBr(self.builder, c, then_bb, else_bb);
+
+					self.use_bb(then_bb);
+					let then_v = self.block(then);
+
+
+					self.use_bb(else_bb);
+					let else_v = or.as_ref().and_then(|e| self.expr(e));
+
+					self.info.tys.get(&e.info.id).and_then(|ty| {
+						then_v.map(|t| {
+							let phi = llvm::LLVMBuildPhi(self.builder, self.ll_ty(ty).unwrap(), c_str("join").as_ptr());
+							llvm::LLVMAddIncoming(
+								phi,
+								&[t, else_v.unwrap()] as *const ValueRef,
+								&[then_bb, else_bb] as *const BasicBlockRef,
+								2);
+							phi
+						})
+					})
 				}
 				Expr::BinOp(ref lhs, _op, ref rhs) => {
 					let l = self.expr(lhs).unwrap();
@@ -99,6 +157,9 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 					Some(llvm::LLVMConstIntOfString(t, c_str(&self.ctx.infer.src.get_num(num)).as_ptr(), 10))
 				}
 				Expr::Break => {
+					llvm::LLVMBuildBr(self.builder, self.post_loop.unwrap());
+					let bb = self.new_bb("post_break");
+					self.use_bb(bb);
 					None
 				}
 				_ => {

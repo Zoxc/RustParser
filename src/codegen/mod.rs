@@ -15,6 +15,8 @@ use libc;
 
 mod expr;
 
+type Ctx<'m, 'c> = (&'m RefMap<'c>, &'m infer::Vars<'c>);
+
 pub struct GenContext<'i, 'c: 'i> {
 	infer: &'i InferContext<'c>,
 
@@ -24,6 +26,7 @@ pub struct GenContext<'i, 'c: 'i> {
 	ll_mod: ModuleRef,
 
 	void_ptr: TypeRef,
+	i1: TypeRef,
 }
 
 pub fn c_str(s: &str) -> CString {
@@ -45,50 +48,39 @@ impl<'i, 'c> GenContext<'i, 'c> {
 					Some(llvm::LLVMInt64TypeInContext(self.ll_ctx))
 				},
 				ty::Ty_::Ptr(p) => self.ll_ty(p).map(|l| llvm::LLVMPointerType(l, 0)),
+				ty::Ty_::Bool => Some(self.i1),
 				_ => Some(llvm::LLVMInt64TypeInContext(self.ll_ctx)),
 			}
 		}
 	}
 
-	pub fn fixed_ty(&self, ty: ty::Ty<'c>, map: &RefMap<'c>) -> ty::Ty<'c> {
+	pub fn fixed_ty<'m>(&self, ty: ty::Ty<'c>, ctx: Ctx<'m, 'c>) -> ty::Ty<'c> {
 
 		let info = infer::Vars {
 			vars: RefCell::new(Vec::new()),
 		};
 
-		info.inst_ty(self.infer, ty, &map.params, false)
+		ctx.1.inst_ty(self.infer, ty, &ctx.0.params, false)
 	}
 
 	pub fn mangle_ty(&self, ty: ty::Ty<'c>, map: &RefMap<'c>) -> String {
-		/*match *ty {
-			Ty_::Error | Ty_::Infer(_) => panic!(),
-			Ty_::Int => format!("int"),
-			Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
-			Ty_::Fn(ref args, ret) => if p {
-				format!("(({}) -> {})", connect!(args), self.format_ty_(ctx, ret, true))
-			} else {
-				format!("({}) -> {}", connect!(args), self.format_ty_(ctx, ret, true))
-			},
-			Ty_::Kind(_) => format!("kind"),
-			Ty_::Ref(i, ref substs) => format!("{}[{}]", ctx.path(i), connect!(substs)),
-			Ty_::Proj(_, ref substs, _) => format!("proj[{}]", connect!(substs)),
-			Ty_::Ptr(p) => format!("{}*", self.format_ty(ctx, p)),
-		}
-		let scheme = &self.infer.type_map.borrow().get(&id).unwrap().0.clone();
-
-		if scheme.params.is_empty() {
-			"".to_string()
-		} else {
-			let vec: Vec<String> = scheme.params.iter().map(|p| self.mangle_ty(map.get(&p.id), map)).collect();
-		    format!("[{}]", vec.connect(", "))
+		macro_rules! connect {
+		    ($vec:expr) => {{
+		    	let vec: Vec<String> = $vec.iter().map(|t| self.mangle_ty(t, map)).collect();
+		    	vec.connect(", ")
+		    }}
 		}
 
-		let name = mangle_name(id, map);
-		match self.infer.parents.get(&id) {
-			Some(p) => format!("{}.{}", self.mangle_(*p, map), name),
-			_ => name,
-		}*/
-		"ty".to_string()
+		match *ty {
+			ty::Ty_::Error | ty::Ty_::Infer(_) | ty::Ty_::Proj(_, _, _) => panic!(),
+			ty::Ty_::Int => format!("int"),
+			ty::Ty_::Bool => format!("bool"),
+			ty::Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
+			ty::Ty_::Fn(ref args, ret) => format!("(({}) -> {})", connect!(args), self.mangle_ty(ret, map)),
+			ty::Ty_::Kind(_) => format!("kind"),
+			ty::Ty_::Ref(i, ref substs) => format!("{}[{}]", self.infer.path(i), connect!(substs)),
+			ty::Ty_::Ptr(p) => format!("{}*", self.mangle_ty(p, map)),
+		}
 	}
 
 	pub fn mangle_name(&self, id: Id, map: &RefMap<'c>) -> String {
@@ -132,6 +124,8 @@ impl<'i, 'c> GenContext<'i, 'c> {
 
 		let info = self.infer.type_map.borrow().get(&id).unwrap().1.clone();
 
+		let ty = self.fixed_ty(scheme.ty, (map, &info.vars));
+
 		{
 
 			let p = map.params.iter().map(|(k,v)| format!("{}: {}, ", self.infer.path(*k), info.vars.format_ty(self.infer, v))).fold(String::new(), |mut a, b| {
@@ -146,7 +140,7 @@ impl<'i, 'c> GenContext<'i, 'c> {
 			Lookup::Item(item) => match item.val {
 				Item::Fn(ref d) => {
 					unsafe {
-						let ty = match *self.fixed_ty(scheme.ty, map) {
+						let ll_ty = match *ty {
 							ty::Ty_::Fn(ref args, ret) => {
 								let mut vec: Vec<TypeRef> = args.iter().map(|a| self.ll_ty(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
 								vec.insert(0, self.void_ptr);
@@ -157,7 +151,7 @@ impl<'i, 'c> GenContext<'i, 'c> {
 
 						let f =  llvm::LLVMAddFunction(self.ll_mod,
 							c_str(&self.mangle(id, map)).as_ptr(),
-							ty);
+							ll_ty);
 
 						let entry = llvm::LLVMAppendBasicBlockInContext(self.ll_ctx, f, c_str("entry").as_ptr());
 
@@ -171,8 +165,10 @@ impl<'i, 'c> GenContext<'i, 'c> {
 							builder: builder,
 							vars: HashMap::new(),
 							bb: entry,
+							func: f,
 							map: map,
 							info: info,
+							post_loop: None,
 						};
 
 						for i in 0..d.params.len() {
@@ -211,6 +207,7 @@ unsafe fn make_ctx<'i, 'c>(infer: &'i InferContext<'c>) -> GenContext<'i, 'c> {
 		ll_ctx: llcx,
 		ll_mod: llmod,
 		void_ptr: llvm::LLVMPointerType(llvm::LLVMInt8TypeInContext(llcx), 0),
+		i1: llvm::LLVMInt1TypeInContext(llcx),
 	}
 }
 

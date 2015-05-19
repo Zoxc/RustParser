@@ -112,6 +112,7 @@ pub mod interned {
 		OP_STAR, "*";
 		OP_PLUS, "+";
 		OP_ASSIGN, "=";
+		OP_EQ, "==";
 		OP_ARROW_RIGHT, "->";
 	);
 
@@ -136,6 +137,8 @@ impl Context {
 	fn op_map() -> HashMap<Op, OpInfo> {
 		let mut map = HashMap::new();
 		let mut i = 0;
+		map.insert(interned::OP_EQ, i);
+		i += 1;
 		map.insert(interned::OP_PLUS, i);
 		i += 1;
 		map.insert(interned::OP_STAR, i);

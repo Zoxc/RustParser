@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use ast;
 use misc;
 use misc::Source;
+use misc::interned::*;
 use std::rc::Rc;
 use lexer::Span;
 use std::cell::RefCell;
@@ -40,6 +41,7 @@ pub struct InferContext<'c> {
 
 	ty_err: Ty<'c>,
 	ty_int: Ty<'c>,
+	ty_bool: Ty<'c>,
 	ty_unit: Ty<'c>,
 }
 
@@ -87,6 +89,7 @@ impl Args {
 pub struct GroupInfo<'c> {
 	pub vars: Vars<'c>,
 	pub refs: HashMap<Id, RefMap<'c>>,
+	pub tys: HashMap<Id, Ty<'c>>, // `If` nodes not present are unused
 }
 
 pub struct Vars<'c> {
@@ -106,6 +109,7 @@ impl<'c> Vars<'c> {
 		match *ty {
 			Ty_::Error => format!("<error>"),
 			Ty_::Int => format!("int"),
+			Ty_::Bool => format!("bool"),
 			Ty_::Infer(i) => format!("λ{}", i),
 			Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
 			Ty_::Fn(ref args, ret) => if p {
@@ -161,7 +165,7 @@ impl<'c> Vars<'c> {
 
 		match *ty {
 			Ty_::Infer(_) => if allow_infer { ty } else { panic!() },
-			Ty_::Error | Ty_::Int => ty,
+			Ty_::Error | Ty_::Int | Ty_::Bool => ty,
 			Ty_::Tuple(ref vec) => self.alloc_ty(ctx, Ty_::Tuple(map_vec!(vec))),
 			Ty_::Fn(ref args, ret) => self.alloc_ty(ctx, Ty_::Fn(map_vec!(args), map!(ret))),
 			Ty_::Kind(id) => {
@@ -293,6 +297,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 			(_, &Ty_::Infer(v)) => return self.unify(sp, r, l),
 
 			(&Ty_::Int, &Ty_::Int) => true,
+			(&Ty_::Bool, &Ty_::Bool) => true,
 			(&Ty_::Tuple(ref la), &Ty_::Tuple(ref ra)) => arg_match!(la, ra),
 			(&Ty_::Kind(a), &Ty_::Kind(b)) => a == b,
 			(&Ty_::Ref(a, ref la), &Ty_::Ref(b, ref ra)) => a == b && arg_match!(la, ra),
@@ -357,6 +362,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		    		Some(r) => self.unify(e.info.span, r, t),
 		    		None => result = Some(t),
 		    	};
+		    	result
 		    }}
 		}
 
@@ -415,9 +421,20 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				self.infer(args.next(), rhs, r);
 			}
 			Expr::BinOp(ref lhs, op, ref rhs) => {
-				let r = get_result!();
+				let r = if op == OP_EQ {
+					result!(self.ctx.ty_bool);
+					Some(self.new_var(e.info.span))
+				} else {
+					get_result!()
+				};
 				self.infer(args.next(), lhs, r);
 				self.infer(args.next(), rhs, r);
+			}
+			Expr::If(ref cond, ref then, ref or) => {
+				result.map(|t| self.info.tys.insert(e.info.id, t));
+				self.infer(args.next(), cond, Some(self.ctx.ty_bool));
+				self.infer_block(args, &then, result);
+				or.as_ref().map(|e| self.infer(args.next(), e, result));
 			}
 			Expr::Ref(name, id, ref substs) => {
 				result!(self.infer_value(e.info, id, substs));
@@ -637,6 +654,7 @@ impl<'c> InferContext<'c> {
 				vars: Vars {
 					vars: RefCell::new(Vec::new())
 				},
+				tys: HashMap::new(),
 				refs: HashMap::new(),
 			},
 			var_spans: RefCell::new(Vec::new()),
@@ -701,6 +719,7 @@ pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<
 
 		ty_err: alloc_ty(&arena, Ty_::Error),
 		ty_int: alloc_ty(&arena, Ty_::Int),
+		ty_bool: alloc_ty(&arena, Ty_::Bool),
 		ty_unit: alloc_ty(&arena, Ty_::Tuple(Vec::new())),
 	};
 
