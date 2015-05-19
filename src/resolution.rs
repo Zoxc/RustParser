@@ -1,4 +1,4 @@
-use misc::{Source, Msg};
+use misc::{Context, Source, Msg};
 use ast::*;
 use std::collections::HashMap;
 use std::cell::RefCell;
@@ -137,16 +137,25 @@ impl<'c> ResolutionPass<'c> {
 	}
 }
 
-pub fn run(src: &Source, block: &mut Block_<Item_>) -> HashMap<Id, Id> {
+pub fn run(ctx: &mut Context) -> HashMap<Id, Id> {
 	let parents = RefCell::new(HashMap::new());
 
-	{
-		let mut declare_pass = ResolutionPass { declare: true, src: src, id: None, parent: None, parents: &parents, symbols: &mut block.val.symbols };
-		declare_pass.items(&mut block.val.vals);
+	for src in ctx.srcs.iter_mut() {
+		let mut block = src.ast.take().unwrap();
+		{
+			let mut declare_pass = ResolutionPass { declare: true, src: src, id: None, parent: None, parents: &parents, symbols: &mut block.val.symbols };
+			declare_pass.items(&mut block.val.vals);
+		}
+		src.ast = Some(block);
 	}
-	{
-		let mut lookup_pass = ResolutionPass { declare: false, src: src, id: None, parent: None, parents: &parents, symbols: &mut block.val.symbols };
-		lookup_pass.items(&mut block.val.vals);
+
+	for src in ctx.srcs.iter_mut() {
+		let mut block = src.ast.take().unwrap();
+		{
+			let mut lookup_pass = ResolutionPass { declare: false, src: src, id: None, parent: None, parents: &parents, symbols: &mut block.val.symbols };
+			lookup_pass.items(&mut block.val.vals);
+		}
+		src.ast = Some(block);
 	}
 
 	parents.into_inner()

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use ast;
 use misc;
-use misc::Source;
+use misc::{Source, Context};
 use misc::interned::*;
 use std::rc::Rc;
 use lexer::Span;
@@ -20,7 +20,7 @@ pub enum Msg {
 }
 
 impl Msg {
-	pub fn msg(&self, _src: &Source) -> String {
+	pub fn msg(&self, _ctx: &Context) -> String {
 		match *self {
 			Msg::Error(ref str) => str.clone(),
 		}
@@ -32,7 +32,7 @@ pub struct RefMap<'c> {
 }
 
 pub struct InferContext<'c> {
-	pub src: &'c Source,
+	pub ctx: &'c Context,
 	arena: &'c TypedArena<Ty_<'c>>,
 	pub node_map: &'c NodeMap<'c>,
 	pub type_map: RefCell<HashMap<Id, (Scheme<'c>, Rc<GroupInfo<'c>>)>>,
@@ -215,11 +215,11 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	}
 
 	fn error(&self, sp: Span, msg: String) {
-		self.ctx.src.msg(sp, misc::Msg::Infer(Msg::Error(msg)));
+		self.ctx.ctx.src_from_span(sp).msg(sp, misc::Msg::Infer(Msg::Error(msg)));
 	}
 
 	fn print(&self, sp: Span, s: &str) {
-		println!("{}\n{}", s, self.ctx.src.format_span(sp));
+		println!("{}\n{}", s, self.ctx.ctx.src_from_span(sp).format_span(sp));
 	}
 
 	fn alloc_ty(&self, ty: Ty_<'c>) -> Ty<'c> {
@@ -429,6 +429,9 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				};
 				self.infer(args.next(), lhs, r);
 				self.infer(args.next(), rhs, r);
+			}
+			Expr::Block(ref b) => {
+				self.infer_block(args.next(), b, result);
 			}
 			Expr::If(ref cond, ref then, ref or) => {
 				result.map(|t| self.info.tys.insert(e.info.id, t));
@@ -681,7 +684,7 @@ impl<'c> InferContext<'c> {
 			Lookup::TypeParam(p) => (p.val.name, p.info.span),
 			_ => panic!(),
 		};
-		(self.src.get_name(ident.0.val), span)
+		(self.ctx.get_name(ident.0.val), span)
 	}
 
 	pub fn path(&self, id: Id) -> String {
@@ -707,14 +710,14 @@ impl<'ctx, 'c> Visitor<'c> for InferPass<'ctx, 'c> {
 	}
 }
 
-pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<'c>, parents: HashMap<Id, Id>) {
+pub fn run<'c>(ctx: &'c Context, node_map: &'c NodeMap<'c>, parents: HashMap<Id, Id>) {
 	let arena = TypedArena::new();
 	let ctx = InferContext {
-		src: src,
+		ctx: ctx,
 		arena: &arena,
 		node_map: node_map,
 		type_map: RefCell::new(HashMap::new()),
-		recursion_map: recursion::run(block, node_map),
+		recursion_map: recursion::run(ctx, node_map),
 		parents: parents,
 
 		ty_err: alloc_ty(&arena, Ty_::Error),
@@ -724,14 +727,17 @@ pub fn run<'c>(src: &'c Source, block: &'c Block_<Item_>, node_map: &'c NodeMap<
 	};
 
 	let mut pass = InferPass { ctx: &ctx };
-	pass.visit_item_block(block);
 
-    if src.has_msgs() {
-        print!("{}", src.format_msgs());
+	for src in ctx.ctx.srcs.iter() {
+		let block = src.ast.as_ref().unwrap();
+		pass.visit_item_block(block);
+	}
+
+    if ctx.ctx.failed() {
         return;
     }
 
     println!("generating code...");
     
-    codegen::run(block, &ctx);
+    codegen::run(&ctx);
 }

@@ -1,16 +1,16 @@
-use misc::Source;
+use misc::Context;
 use ast::*;
 
-fn ident(src: &Source, i: Ident) -> String {
-	src.get_name(i.0.val)
+fn ident(ctx: &Context, i: Ident) -> String {
+	ctx.get_name(i.0.val)
 }
 
-fn do_block<T>(src: &Source, block: &Block_<N<T>>, f: fn(&Source, &N<T>) -> String) -> String {
+fn do_block<T>(ctx: &Context, block: &Block_<N<T>>, f: fn(&Context, &N<T>) -> String) -> String {
 	if block.val.vals.is_empty() {
 		return "".to_string();
 	}
 
-	let r: &str = &block.val.vals.iter().map(|e| f(src, &e)).collect::<Vec<String>>().connect("\n");
+	let r: &str = &block.val.vals.iter().map(|e| f(ctx, &e)).collect::<Vec<String>>().connect("\n");
 
 	let mut s = "\n".to_string();
 	s.push_str(&r.lines().map(|l| format!("    {}", l)).collect::<Vec<String>>().connect("\n"));
@@ -18,81 +18,82 @@ fn do_block<T>(src: &Source, block: &Block_<N<T>>, f: fn(&Source, &N<T>) -> Stri
 	s
 }
 
-fn block(src: &Source, block: &Block_<Expr_>) -> String {
-	do_block(src, block, expr)
+fn block(ctx: &Context, block: &Block_<Expr_>) -> String {
+	do_block(ctx, block, expr)
 }
 
-fn generics(src: &Source, generics: &Generics) -> String {
+fn generics(ctx: &Context, generics: &Generics) -> String {
 	if generics.params.is_empty() {
 		"".to_string()
 	} else {
-		let p = generics.params.iter().map(|p| format!("{}({})", ident(src, p.val.name), p.info.id.0)).collect::<Vec<String>>().connect(", ");
+		let p = generics.params.iter().map(|p| format!("{}({})", ident(ctx, p.val.name), p.info.id.0)).collect::<Vec<String>>().connect(", ");
 		format!("[{}]", p)
 	}
 }
 
-fn substs(src: &Source, s: &Option<Vec<Ty_>>) -> String {
+fn substs(ctx: &Context, s: &Option<Vec<Ty_>>) -> String {
 	match *s {
 		Some(ref v) => {
-			let p = v.iter().map(|t| ty(src, t)).collect::<Vec<String>>().connect(", ");
+			let p = v.iter().map(|t| ty(ctx, t)).collect::<Vec<String>>().connect(", ");
 			format!("[{}]", p)
 		}
 		None => "".to_string()
 	}
 }
 
-pub fn item_block(src: &Source, block: &Block_<Item_>) -> String {
-	do_block(src, block, item)
+pub fn item_block(ctx: &Context, block: &Block_<Item_>) -> String {
+	do_block(ctx, block, item)
 }
 
-fn expr(src: &Source, e: &Expr_) -> String {
+fn expr(ctx: &Context, e: &Expr_) -> String {
 	match e.val {
-		Expr::Num(n) => src.get_num(n),
+		Expr::Num(n) => ctx.get_num(n),
 		Expr::Call(ref obj, ref args) => {
-			let a = args.iter().map(|e| expr(src, e)).collect::<Vec<String>>().connect(", ");
-			format!("{}({})", expr(src, obj), a)
+			let a = args.iter().map(|e| expr(ctx, e)).collect::<Vec<String>>().connect(", ");
+			format!("{}({})", expr(ctx, obj), a)
 		} 
-		Expr::Ref(i, _, ref s) => format!("{}{}", ident(src, i), substs(src, s)),
+		Expr::Ref(i, _, ref s) => format!("{}{}", ident(ctx, i), substs(ctx, s)),
 		Expr::If(ref cond, ref then, ref otherwise) => {
-			let mut r = format!("if ({}){}", expr(src, cond), block(src, then));
+			let mut r = format!("if ({}){}", expr(ctx, cond), block(ctx, then));
 			if let Some(ref v) = *otherwise {
-				r.push_str(&expr(src, &*v));
+				r.push_str(" else ");
+				r.push_str(&expr(ctx, &*v));
 			};
 			r
 		},
-		Expr::Assign(op, ref lhs, ref rhs) => format!("({} {} {})", expr(src, lhs), src.get_op(op), expr(src, rhs)),
-		Expr::BinOp(ref lhs, op, ref rhs) => format!("({} {} {})", expr(src, lhs), src.get_op(op), expr(src, rhs)),
-		Expr::UnaryOp(op, ref e) => format!("({}{})", src.get_op(op), expr(src, e)),
+		Expr::Assign(op, ref lhs, ref rhs) => format!("({} {} {})", expr(ctx, lhs), ctx.get_op(op), expr(ctx, rhs)),
+		Expr::BinOp(ref lhs, op, ref rhs) => format!("({} {} {})", expr(ctx, lhs), ctx.get_op(op), expr(ctx, rhs)),
+		Expr::UnaryOp(op, ref e) => format!("({}{})", ctx.get_op(op), expr(ctx, e)),
 		Expr::Return(ref ret) => match *ret {
-			Some(ref e) => format!("return ({})", expr(src, &e)),
+			Some(ref e) => format!("return ({})", expr(ctx, &e)),
 			None => format!("return")
 		},
-		Expr::Loop(ref b) => format!("loop{}", block(src, b)),
+		Expr::Loop(ref b) => format!("loop{}", block(ctx, b)),
 		Expr::Break => format!("break"),
-		Expr::Block(ref b) => block(src, b),
+		Expr::Block(ref b) => block(ctx, b),
 		Expr::Error => format!("<error>"),
 	}
 }
 
-fn ty(src: &Source, t: &Ty_) -> String {
+fn ty(ctx: &Context, t: &Ty_) -> String {
 	match t.val {
 		Ty::Error => format!("<error>"),
-		Ty::Ptr(ref t) => format!("{}*", ty(src, t)),
+		Ty::Ptr(ref t) => format!("{}*", ty(ctx, t)),
 		Ty::Infer => "_".to_string(),
-		Ty::Ref(i, _, ref s) => format!("{}{}", ident(src, i), substs(src, s)),
+		Ty::Ref(i, _, ref s) => format!("{}{}", ident(ctx, i), substs(ctx, s)),
 	}
 }
 
-fn fn_param(src: &Source, p: &FnParam_) -> String {
+fn fn_param(ctx: &Context, p: &FnParam_) -> String {
 	match p.val.1.val {
-		Ty::Infer => ident(src, p.val.0),
-		_ => format!("{} {}", ty(src, &p.val.1), ident(src, p.val.0))
+		Ty::Infer => ident(ctx, p.val.0),
+		_ => format!("{} {}", ty(ctx, &p.val.1), ident(ctx, p.val.0))
 	}
 }
 
-pub fn item(src: &Source, e: &Item_) -> String {
+pub fn item(ctx: &Context, e: &Item_) -> String {
 	match e.val {
-		Item::Data(i, ref g, ref b) => format!("data {}{}{}", ident(src, i), generics(src, g), item_block(src, b)),
-		Item::Fn(ref d) => format!("fn {}{}({}){}", ident(src, d.name), generics(src, &d.generics), d.params.iter().map(|param| fn_param(src, param)).collect::<Vec<String>>().connect(", "), block(src, &d.block)),
+		Item::Data(i, ref g, ref b) => format!("data {}{}{}", ident(ctx, i), generics(ctx, g), item_block(ctx, b)),
+		Item::Fn(ref d) => format!("fn {}{}({}){}", ident(ctx, d.name), generics(ctx, &d.generics), d.params.iter().map(|param| fn_param(ctx, param)).collect::<Vec<String>>().connect(", "), block(ctx, &d.block)),
 	}
 }

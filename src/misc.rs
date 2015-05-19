@@ -7,7 +7,7 @@ use lexer;
 use infer;
 use lexer::Span;
 use interner::{Val, Interner};
-use ast::Id;
+use ast::{Id, Block_, Item_};
 
 macro_rules! intern_type {
     ($n:ident) => {
@@ -45,12 +45,12 @@ pub enum Msg {
 }
 
 impl Msg {
-	pub fn msg(&self, src: &Source) -> String {
+	pub fn msg(&self, ctx: &Context) -> String {
 		match *self {
-			Msg::Parser(ref msg) => msg.msg(src),
-			Msg::Lexer(ref msg) => msg.msg(src),
-			Msg::Infer(ref msg) => msg.msg(src),
-			Msg::Resolution(name) => format!("Unknown identifier '{}'", src.get_name(name)),
+			Msg::Parser(ref msg) => msg.msg(ctx),
+			Msg::Lexer(ref msg) => msg.msg(ctx),
+			Msg::Infer(ref msg) => msg.msg(ctx),
+			Msg::Resolution(name) => format!("Unknown identifier '{}'", ctx.get_name(name)),
 		}
 	}
 }
@@ -130,6 +130,7 @@ pub type OpInfo = u32;
 pub struct Context {
 	pub interners: Interners,
 	pub op_map: HashMap<Op, OpInfo>,
+	pub srcs: Vec<Source>,
 	id_count: RefCell<u32>,
 }
 
@@ -149,6 +150,7 @@ impl Context {
 		Context {
 			interners: interned::new_interners(),
 			op_map: Context::op_map(),
+			srcs: Vec::new(),
 			id_count: RefCell::new(0),
 		}
 	}
@@ -157,35 +159,59 @@ impl Context {
 		*self.id_count.borrow_mut() += 1;
 		Id(*self.id_count.borrow_mut())
 	}
+
+	pub fn get_name(&self, n: Name) -> String {
+		self.interners.name.get(n).to_string()
+	}
+
+	pub fn get_num(&self, n: Num) -> String {
+		self.interners.num.get(n).to_string()
+	}
+
+	pub fn get_op(&self, o: Op) -> String {
+		self.interners.op.get(o).to_string()
+	}
+
+	pub fn failed(&self) -> bool {
+		self.srcs.iter().fold(false, |v, src| {
+		    if src.has_msgs() {
+		        print!("{}", src.format_msgs(self));
+		        true
+		    } else {
+		    	v
+		    }
+		})
+	}
+
+	pub fn src_from_span<'c>(&'c self, sp: Span) -> &'c Source {
+		for src in self.srcs.iter().rev() {
+			if sp.start as usize >= src.span_start {
+				return src;
+			}
+		}
+		panic!("Span without source");
+	}
 }
 
 pub struct Source {
-	pub ctx: Rc<Context>,
 	pub filename: String,
 	pub src: String,
+	pub span_start: usize,
+	pub ast: Option<Block_<Item_>>,
 	msgs: RefCell<Vec<Message>>,
 }
 
 impl Source {
-	pub fn new(ctx: Rc<Context>, filename: String, src: &str) -> Source {
-		Source {
-			ctx: ctx,
+	pub fn create<'c>(ctx: &'c mut Context, filename: String, src: &str) -> usize {
+		let s = Source {
 			filename: filename,
 			src: format!("{}\0", src),
+			ast: None,
+			span_start: ctx.srcs.last().map(|l| l.span_start + l.src.len()).unwrap_or(0),
 			msgs: RefCell::new(Vec::new()),
-		}
-	}
-
-	pub fn get_name(&self, n: Name) -> String {
-		self.ctx.interners.name.get(n).to_string()
-	}
-
-	pub fn get_num(&self, n: Num) -> String {
-		self.ctx.interners.num.get(n).to_string()
-	}
-
-	pub fn get_op(&self, o: Op) -> String {
-		self.ctx.interners.op.get(o).to_string()
+		};
+		ctx.srcs.push(s);
+		ctx.srcs.len() - 1
 	}
 
 	pub fn msg(&self, span: Span, msg: Msg) {
@@ -195,10 +221,9 @@ impl Source {
 		});
 	}
 
-	fn line_info(&self, s: Span) -> (usize, usize) {
+	fn line_info(&self, pos: usize) -> (usize, usize) {
 		let src = self.src.as_bytes();
 
-		let pos = s.start as usize;
 		let mut c = 0;
 		let mut ls = 0;
 
@@ -244,13 +269,14 @@ impl Source {
 	}
 
 	pub fn format_span(&self, s: Span) -> String {
-		let (line_nr, start) = self.line_info(s);
+		let span_start = s.start as usize - self.span_start;
+		let (line_nr, start) = self.line_info(span_start);
 		let end = self.line_end(start);
 		let line = &self.src[start..end];
 		let pos = format!("{}:{}: ", self.filename, line_nr);
-		let space = std::iter::repeat(" ").take(s.start as usize - start as usize + pos.len()).collect::<String>();
+		let space = std::iter::repeat(" ").take(span_start - start + pos.len()).collect::<String>();
 		let cursor = if s.len > 1 {
-			std::iter::repeat("~").take(std::cmp::min(s.len as usize, end - s.start as usize)).collect::<String>()
+			std::iter::repeat("~").take(std::cmp::min(s.len as usize, end - span_start)).collect::<String>()
 		} else {
 			"^".to_string()
 		};
@@ -261,8 +287,8 @@ impl Source {
 		!self.msgs.borrow().is_empty()
 	}
 
-	pub fn format_msgs(&self) -> String {
-		let m: Vec<String> = self.msgs.borrow().iter().rev().map(|m| format!("error: {}\n{}", m.msg.msg(self), self.format_span(m.span))).collect();
+	pub fn format_msgs(&self, ctx: &Context) -> String {
+		let m: Vec<String> = self.msgs.borrow().iter().rev().map(|m| format!("error: {}\n{}", m.msg.msg(ctx), self.format_span(m.span))).collect();
 		m.concat()
 	}
 }

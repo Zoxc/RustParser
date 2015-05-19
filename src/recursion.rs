@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use ast;
+use misc::Context;
 use ast::*;
 use std::rc::Rc;
 use node_map::NodeMap;
@@ -72,12 +73,17 @@ impl<'c> Visitor<'c> for RecursionPass<'c> {
 	}
 }
 
-pub fn run<'c>(block: &'c Block_<Item_>, node_map: &'c NodeMap<'c>) -> HashMap<Id, Rc<Vec<Id>>>{
+pub fn run<'c>(ctx: &'c Context, node_map: &'c NodeMap<'c>) -> HashMap<Id, Rc<Vec<Id>>>{
 	let mut pass = RecursionPass {
 		node_map: node_map,
 		visited: HashSet::new(),
 		map: HashMap::new(),
 	};
-	pass.visit_item_block(block);
+
+	for src in ctx.srcs.iter() {
+		let block = src.ast.as_ref().unwrap();
+		pass.visit_item_block(block);
+	}
+
 	pass.map
 }

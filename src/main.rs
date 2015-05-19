@@ -26,33 +26,38 @@ mod infer;
 mod recursion;
 mod codegen;
 
-fn main() {
-    let path = std::path::Path::new("test.txt");
+fn make_src(ctx: &mut Context, f: &str)  {
+    let path = std::path::Path::new(f);
     let mut hw_file = std::fs::File::open(&path).unwrap();
     let mut data = "".to_string();
     hw_file.read_to_string(&mut data).ok();
 
-	let src = Source::new(Rc::new(Context::new()), "input".to_string(), &data[..]);
+    let src = Source::create(ctx, f.to_string(), &data[..]);
 
-    println!("parsing...");
+    println!("parsing {}...", f);
 
-    let mut ast = parser::parse(&src);
+    ctx.srcs[src].ast = Some(parser::parse(ctx, &ctx.srcs[src]));
+}
 
-    if src.has_msgs() {
-        print!("{}", src.format_msgs());
+fn main() {
+    let mut ctx = Context::new();
+
+    make_src(&mut ctx, "core.st");
+    make_src(&mut ctx, "test.txt");
+
+    if ctx.failed() {
         return;
     }
 
-    let parents = resolution::run(&src, &mut ast);
+    let parents = resolution::run(&mut ctx);
 
-    if src.has_msgs() {
-        print!("{}", src.format_msgs());
+    if ctx.failed() {
         return;
     }
 
-    let map = node_map::create(&ast);
+    let map = node_map::create(&ctx);
 
     println!("inferring...");
     
-    infer::run(&src, &ast, &map, parents);
+    infer::run(&ctx, &map, parents);
 }

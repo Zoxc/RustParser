@@ -36,7 +36,7 @@ pub enum Msg {
 }
 
 impl Msg {
-	pub fn msg(&self, _src: &Source) -> String {
+	pub fn msg(&self, _ctx: &Context) -> String {
 		match *self {
 			Msg::IllegalTab => format!("Tab indentation not allowed"),
 			Msg::UnknownChars(ref s) => format!("Unknown charater(s) '{}'", s),
@@ -141,7 +141,7 @@ macro_rules! span {
 }
 
 impl<'c> Lexer<'c> {
-	pub fn new(source: &'c Source) -> Lexer<'c> {
+	pub fn new(ctx: &'c Context, source: &'c Source) -> Lexer<'c> {
 		let src = source.src.as_bytes();
 
 		let mut result: Lexer = Lexer {
@@ -157,7 +157,7 @@ impl<'c> Lexer<'c> {
 			deindent_bracket: false,
 			deindent_level: 0,
 			src: source,
-			ctx: &source.ctx,
+			ctx: ctx,
 		};
 
 		assert!(*result.end == 0);

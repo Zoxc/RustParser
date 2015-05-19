@@ -22,5 +22,7 @@ fn tr(b)
     t(3, b)
 
 fn r()
-    if 2 == 2
-        return 2
+    return if 2 == 2
+         2
+    else
+        4

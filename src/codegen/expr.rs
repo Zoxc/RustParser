@@ -91,34 +91,38 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 					self.post_loop = old_post;
 					None
 				}
-				Expr::Assign(op, ref lhs, ref rhs) => {
-					if op == OP_EQ {
-						let l = self.expr(lhs);
-						let r = self.expr(rhs);
-						Some(match l {
-							Some(lv) => {
-								llvm::LLVMBuildICmp(self.builder, llvm::IntEQ as c_uint, lv, r.unwrap(), c_str("eq").as_ptr())
-							}
-							None => llvm::LLVMConstInt(self.ctx.i1, 1 as c_ulonglong, llvm::False)
-						})
-					} else {
-						self.expr(lhs);
-						self.expr(rhs);
-						None
-					}
+				Expr::Block(ref b) => {
+					self.block(b)
+				}
+				Expr::Assign(_op, ref lhs, ref rhs) => {
+					self.expr(lhs);
+					self.expr(rhs);
+					None
 				}
 				Expr::If(ref cond, ref then, ref or) => {
 					let c = self.expr(cond).unwrap();
 					let then_bb = self.new_bb("then");
 					let else_bb = self.new_bb("else");
-					//llvm::LLVMBuildCondBr(self.builder, c, then_bb, else_bb);
+					llvm::LLVMBuildCondBr(self.builder, c, then_bb, else_bb);
 
 					self.use_bb(then_bb);
 					let then_v = self.block(then);
 
+					let (else_v, post_bb) = match or.as_ref() {
+						Some(e) => {
+							let post_bb = self.new_bb("post-if");
+							llvm::LLVMBuildBr(self.builder, post_bb);
+							self.use_bb(else_bb);
+							(self.expr(e), post_bb)
+						},
+						None => {
+							(None, else_bb)
+						}
+					};
 
-					self.use_bb(else_bb);
-					let else_v = or.as_ref().and_then(|e| self.expr(e));
+					llvm::LLVMBuildBr(self.builder, post_bb);
+
+					self.use_bb(post_bb);
 
 					self.info.tys.get(&e.info.id).and_then(|ty| {
 						then_v.map(|t| {
@@ -132,10 +136,21 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 						})
 					})
 				}
-				Expr::BinOp(ref lhs, _op, ref rhs) => {
-					let l = self.expr(lhs).unwrap();
-					let r = self.expr(rhs).unwrap();
-					Some(llvm::LLVMBuildAdd(self.builder, l, r, c_str("add").as_ptr()))
+				Expr::BinOp(ref lhs, op, ref rhs) => {
+					if op == OP_EQ {
+						let l = self.expr(lhs);
+						let r = self.expr(rhs);
+						Some(match l {
+							Some(lv) => {
+								llvm::LLVMBuildICmp(self.builder, llvm::IntEQ as c_uint, lv, r.unwrap(), c_str("eq").as_ptr())
+							}
+							None => llvm::LLVMConstInt(self.ctx.i1, 1 as c_ulonglong, llvm::False)
+						})
+					} else {
+						let l = self.expr(lhs).unwrap();
+						let r = self.expr(rhs).unwrap();
+						Some(llvm::LLVMBuildAdd(self.builder, l, r, c_str("add").as_ptr()))
+					}
 				}
 				Expr::Ref(name, id, ref substs) => {
 					let p = match self.vars.get(&id) {
@@ -154,7 +169,7 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 				}
 				Expr::Num(num) => {
 					let t = llvm::LLVMInt64TypeInContext(self.ctx.ll_ctx);
-					Some(llvm::LLVMConstIntOfString(t, c_str(&self.ctx.infer.src.get_num(num)).as_ptr(), 10))
+					Some(llvm::LLVMConstIntOfString(t, c_str(&self.ctx.infer.ctx.get_num(num)).as_ptr(), 10))
 				}
 				Expr::Break => {
 					llvm::LLVMBuildBr(self.builder, self.post_loop.unwrap());

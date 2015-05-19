@@ -1,5 +1,5 @@
 use lexer::{Span, Spanned};
-use misc::{Name, Num, Op, Source};
+use misc::{Context, Name, Num, Op, Source};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -41,11 +41,11 @@ pub struct N<T> {
 }
 
 impl<T> N<T> {
-	pub fn new(src: &Source, span: Span, val: T) -> N<T> {
+	pub fn new(ctx: &Context, span: Span, val: T) -> N<T> {
 		N {
 			val: val,
 			info: Info {
-				id: src.ctx.new_id(),
+				id: ctx.new_id(),
 				span: span,
 			},
 		}

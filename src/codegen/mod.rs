@@ -232,12 +232,16 @@ impl<'a, 'ctx, 'c> Visitor<'c> for GenPass<'a, 'ctx, 'c> {
 LLVMWriteBitcodeToFile
 LLVMRustWriteOutputFile
 */
-pub fn run<'i, 'c>(block: &'c Block_<Item_>, ctx: &'i InferContext<'c>) {
+pub fn run<'i, 'c>(ctx: &'i InferContext<'c>) {
 	unsafe {
 		let ctx = make_ctx(ctx);
 
 		let mut pass = GenPass { ctx: &ctx };
-		pass.visit_item_block(block);
+
+		for src in ctx.infer.ctx.srcs.iter() {
+			let block = src.ast.as_ref().unwrap();
+			pass.visit_item_block(block);
+		}
 
 		let tm = llvm::LLVMRustCreateTargetMachine(
 			CString::new("x86_64-generic-generic").unwrap().as_ptr(),

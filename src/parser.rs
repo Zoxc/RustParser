@@ -4,7 +4,7 @@ use ast::*;
 use print;
 use misc;
 use misc::interned::*;
-use misc::{Source, Op, Name};
+use misc::{Context, Source, Op, Name};
 
 pub enum Msg {
 	Expected(String, Token),
@@ -12,7 +12,7 @@ pub enum Msg {
 }
 
 impl Msg {
-	pub fn msg(&self, _src: &Source) -> String {
+	pub fn msg(&self, _ctx: &Context) -> String {
 		match *self {
 			Msg::Expected(ref expected, found) => format!("Expected {}, but found {:?}", expected, found),
 			Msg::ExpectedToken(expected, found) => format!("Expected {:?}, but found {:?}", expected, found),
@@ -32,7 +32,7 @@ macro_rules! noded {
     ($this:expr, $c:expr) => {{
 		let start = $this.lexer.span;
 		let val = $c;
-		N::new($this.lexer.src, $this.span(start), val)
+		N::new($this.lexer.ctx, $this.span(start), val)
     }};
 }
 
@@ -40,14 +40,14 @@ macro_rules! extend {
     ($this:expr, $node:expr, $c:expr) => {{
 		let start = $node.info.span;
 		let val = $c;
-		N::new($this.lexer.src, $this.span(start), val)
+		N::new($this.lexer.ctx, $this.span(start), val)
     }};
 }
 
 macro_rules! node_wrap {
     ($this:expr, $c:expr) => {{
 		let start = $this.lexer.span;
-		$c.map(|v| N::new($this.lexer.src, $this.span(start), v))
+		$c.map(|v| N::new($this.lexer.ctx, $this.span(start), v))
     }};
 }
 
@@ -57,16 +57,16 @@ struct Parser<'c> {
 }
 
 impl<'c> Parser<'c> {
-	pub fn new(src: &'c Source) -> Parser<'c> {
+	pub fn new(ctx: &'c Context, src: &'c Source) -> Parser<'c> {
 		Parser {
-			lexer: lexer::Lexer::new(src),
+			lexer: lexer::Lexer::new(ctx, src),
 			last_ended: 0,
 		}
 	}
 
 	fn is_op_prefix(&self, c: char) -> bool {
 		match self.tok() {
-			Token::Op(op) => self.lexer.src.get_op(op).chars().next().unwrap() == c,
+			Token::Op(op) => self.lexer.ctx.get_op(op).chars().next().unwrap() == c,
 			_ => false
 		}
 	}
@@ -80,7 +80,7 @@ impl<'c> Parser<'c> {
 				self.last_ended = self.lexer.span.start;
 				self.lexer.span.start += 1;
 				self.lexer.span.len -= 1;
-				self.lexer.token = Token::Op(self.lexer.intern(&self.lexer.src.ctx.interners.op, self.lexer.span));
+				self.lexer.token = Token::Op(self.lexer.intern(&self.lexer.ctx.interners.op, self.lexer.span));
     			//bself.print(&format!("SkipTok {:?}", self.lexer.token));
 					
 				}
@@ -192,7 +192,7 @@ impl<'c> Parser<'c> {
 	pub fn parse(&mut self) -> Block_<Item_> {
 		let ast = noded!(self, { self.items() });
 
-		println!("AST! {}", print::item_block(self.lexer.src, &ast));
+		println!("AST! {}", print::item_block(self.lexer.ctx, &ast));
 
 		while !self.is(Token::End) {
 			println!("Left! {:?}", self.tok());
@@ -241,7 +241,7 @@ impl<'c> Parser<'c> {
 	}
 
 	fn block<T, F>(&mut self, baseline: Indent, f: F) -> Block_<T> where F : Fn(&mut Self) -> Option<T> {
-		self.block_(baseline, None, |s| s.entries(f)).unwrap_or(N::new(self.lexer.src, lexer::SPAN_ERROR, Block::new()))
+		self.block_(baseline, None, |s| s.entries(f)).unwrap_or(N::new(self.lexer.ctx, lexer::SPAN_ERROR, Block::new()))
 	}
 
 	fn span(&self, start: Span) -> Span {
@@ -455,7 +455,7 @@ impl<'c> Parser<'c> {
 	fn get_prec_op(&mut self, min: u32) -> Option<(Op, u32)> {
 		match self.tok() {
 			Token::Op(op) => {
-				self.lexer.src.ctx.op_map.get(&op).and_then(|prec| {
+				self.lexer.ctx.op_map.get(&op).and_then(|prec| {
 					if *prec < min {
 						None
 					} else {
@@ -554,7 +554,7 @@ impl<'c> Parser<'c> {
 		self.step();
 		let cond = self.expr();
 
-		let block = self.block_(baseline, Some(pos), |s| s.entries(Parser::try_expr)).unwrap_or(N::new(self.lexer.src, lexer::SPAN_ERROR, Block::new()));
+		let block = self.block_(baseline, Some(pos), |s| s.entries(Parser::try_expr)).unwrap_or(N::new(self.lexer.ctx, lexer::SPAN_ERROR, Block::new()));
 
 		let else_block = if self.is(Token::Line) && self.lexer.peek_ident() == Some(KW_ELSE) {
 			Some(Box::new(noded!(self, {
@@ -577,8 +577,8 @@ impl<'c> Parser<'c> {
 	}
 }
 
-pub fn parse(src: &Source) -> Block_<Item_> {
-	Parser::new(&src).parse()
+pub fn parse(ctx: &Context, src: &Source) -> Block_<Item_> {
+	Parser::new(ctx, src).parse()
 }
 
 #[cfg(test)]

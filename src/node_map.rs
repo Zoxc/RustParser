@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use ast::*;
+use misc::Context;
 
 pub type NodeMap<'c> = HashMap<Id, Lookup<'c>>;
 
@@ -29,8 +30,13 @@ impl<'c> Visitor<'c> for NodeMapPass<'c> {
 	}
 }
 
-pub fn create<'c>(block: &'c Block_<Item_>) -> NodeMap<'c> {
+pub fn create<'c>(ctx: &'c Context) -> NodeMap<'c> {
 	let mut pass = NodeMapPass { map: HashMap::new() };
-	pass.visit_item_block(block);
+
+	for src in ctx.srcs.iter() {
+		let block = src.ast.as_ref().unwrap();
+		pass.visit_item_block(block);
+	}
+
 	pass.map
 }
