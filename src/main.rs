@@ -1,4 +1,4 @@
-#![feature(rustc_private, collections, std_misc, libc)]
+#![feature(rustc_private, slice_concat_ext, slice_extras)]
 
 extern crate arena;
 

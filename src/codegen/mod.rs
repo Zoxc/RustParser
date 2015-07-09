@@ -254,7 +254,6 @@ pub fn run<'i, 'c>(ctx: &'i InferContext<'c>) {
 			llvm::CodeModelDefault,
 			llvm::RelocPIC,
 			llvm::CodeGenLevelNone,
-			true,
 			false,
 			false,
 			true,
