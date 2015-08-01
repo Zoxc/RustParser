@@ -473,7 +473,7 @@ impl<'c> Lexer<'c> {
 
 	fn make_line(&mut self) -> Spanned<Token> {
 		let mut pos = self.pos;
-		let (indent, line_start) = self.get_line_indent(&mut pos, false);
+		let (indent, line_start) = self.get_line_indent(&mut pos, true);
 		self.pos = pos;
 		self.indent = indent;
 		self.line_start = line_start;
