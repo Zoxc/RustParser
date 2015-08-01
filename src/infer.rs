@@ -99,19 +99,23 @@ pub struct Vars<'c> {
 	pub vars: RefCell<Vec<Ty<'c>>>,
 }
 
+fn format_infer(i: usize) -> String {
+	format!("λ{}", i)
+}
+
 impl<'c> Vars<'c> {
 	fn format_ty_(&self, ctx: &InferContext<'c>, mut ty: Ty<'c>, p: bool) -> String {
 		macro_rules! connect {
-		    ($vec:expr) => {{
-		    	let vec: Vec<String> = $vec.iter().map(|t| self.format_ty(ctx, t)).collect();
-		    	vec.connect(", ")
-		    }}
+			($vec:expr) => {{
+				let vec: Vec<String> = $vec.iter().map(|t| self.format_ty(ctx, t)).collect();
+				vec.connect(", ")
+			}}
 		}
 
 		ty = self.prune(ty);
 		match *ty {
 			Ty_::Error => format!("<error>"),
-			Ty_::Infer(i) => format!("λ{}", i),
+			Ty_::Infer(i) => format_infer(i),
 			Ty_::Tuple(ref vec) => format!("({})", connect!(vec)),
 			Ty_::Fn(ref args, ret) => if p {
 				format!("(({}) -> {})", connect!(args), self.format_ty_(ctx, ret, true))
@@ -125,7 +129,7 @@ impl<'c> Vars<'c> {
 		}
 	}
 
-	pub fn format_ty(&self, ctx: &InferContext<'c>, mut ty: Ty<'c>) -> String {
+	pub fn format_ty(&self, ctx: &InferContext<'c>, ty: Ty<'c>) -> String {
 		self.format_ty_(ctx, ty, false)
 	}
 
@@ -155,11 +159,11 @@ impl<'c> Vars<'c> {
 
 	pub fn inst_ty(&self, ctx: &InferContext<'c>, mut ty: Ty<'c>, params: &HashMap<Id, Ty<'c>>, allow_infer: bool) -> Ty<'c> {
 		macro_rules! map {
-		    ($t:expr) => {self.inst_ty(ctx, $t, params, allow_infer)}
+			($t:expr) => {self.inst_ty(ctx, $t, params, allow_infer)}
 		}
 
 		macro_rules! map_vec {
-		    ($vec:expr) => {$vec.iter().map(|t| map!(t)).collect()}
+			($vec:expr) => {$vec.iter().map(|t| map!(t)).collect()}
 		}
 
 		ty = self.prune(ty);
@@ -211,10 +215,6 @@ fn alloc_ty<'c>(arena: &'c TypedArena<Ty_<'c>>, ty: Ty_<'c>) -> Ty<'c> {
 }
 
 impl<'ctx, 'c> InferGroup<'ctx, 'c> {
-	fn name(&self, id: Id) -> String {
-		self.ctx.info(id).0
-	}
-
 	fn error(&self, sp: Span, msg: String) {
 		self.ctx.ctx.src_from_span(sp).msg(sp, misc::Msg::Infer(Msg::Error(msg)));
 	}
@@ -235,11 +235,11 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		t
 	}
 
-	fn inst_ty(&self, mut ty: Ty<'c>, params: &HashMap<Id, Ty<'c>>) -> Ty<'c> {
+	fn inst_ty(&self, ty: Ty<'c>, params: &HashMap<Id, Ty<'c>>) -> Ty<'c> {
 		self.info.vars.inst_ty(self.ctx, ty, params, true)
 	}
 
-	fn format_ty(&self, mut ty: Ty<'c>) -> String {
+	fn format_ty(&self, ty: Ty<'c>) -> String {
 		self.info.vars.format_ty(self.ctx, ty)
 	}
 
@@ -269,22 +269,19 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		r = self.prune(r);
 
 		macro_rules! arg_match {
-		    ($la:expr, $ra:expr) => {{
-		    	let l_args = &$la[..];
-		    	let r_args = &$ra[..];
+			($la:expr, $ra:expr) => {{
+				let l_args = &$la[..];
+				let r_args = &$ra[..];
 				if l_args.len() != r_args.len() {
 					false
 				} else {
 					l_args.iter().zip(r_args.iter()).all(|(l, r)| { self.unify(sp, l, r); false });
 					true
 				}
-		    }}
+			}}
 		}
 
 		let success = match (l, r) {
-			(&Ty_::Error, _) => return,
-			(_, &Ty_::Error) => return,
-
 			(&Ty_::Infer(a), &Ty_::Infer(b)) if a == b => return, // TODO: Can this happen?
 			(&Ty_::Infer(v), _) => {
 				if l.occurs_in(r) {
@@ -295,7 +292,12 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				self.info.vars.vars.borrow_mut()[v as usize] = r;
 				return
 			}
-			(_, &Ty_::Infer(v)) => return self.unify(sp, r, l),
+			(_, &Ty_::Infer(_)) => return self.unify(sp, r, l),
+
+			// Place errors here so errors unify with variables
+			(&Ty_::Error, _) => return,
+			(_, &Ty_::Error) => return,
+
 
 			(&Ty_::Tuple(ref la), &Ty_::Tuple(ref ra)) => arg_match!(la, ra),
 			(&Ty_::Kind(a), &Ty_::Kind(b)) => a == b,
@@ -339,30 +341,30 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 	fn infer(&mut self, args: Args, e: &'c Expr_, mut result: Option<Ty<'c>>) {
 		macro_rules! error {
-		    ($($e:expr),*) => {{
-		    	let m = format!($($e),*);
-		    	self.error(e.info.span, m)
-		    }}
+			($($e:expr),*) => {{
+				let m = format!($($e),*);
+				self.error(e.info.span, m)
+			}}
 		}
 
 		macro_rules! get_result {
-		    () => {{
-		    	if result.is_none() {
-		    		result = Some(self.new_var(e.info.span));
-		    	}
-		    	result
-		    }}
+			() => {{
+				if result.is_none() {
+					result = Some(self.new_var(e.info.span));
+				}
+				result
+			}}
 		}
 
 		macro_rules! result {
-		    ($t:expr) => {{
-		    	let t = $t;
-		    	match result {
-		    		Some(r) => self.unify(e.info.span, r, t),
-		    		None => result = Some(t),
-		    	};
-		    	result
-		    }}
+			($t:expr) => {{
+				let t = $t;
+				match result {
+					Some(r) => self.unify(e.info.span, r, t),
+					None => result = Some(t),
+				};
+				result
+			}}
 		}
 
 		if args.valueness != Valueness::Right {
@@ -412,7 +414,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				self.infer_block(args, b, None);
 				result!(self.ctx.ty_unit);
 			}
-			Expr::Assign(op, ref lhs, ref rhs) => {
+			Expr::Assign(_op, ref lhs, ref rhs) => {
 				let mut l_args = args.next();
 				l_args.valueness = Valueness::LeftTuple;
 				let r = get_result!();
@@ -438,7 +440,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 				self.infer_block(args, &then, result);
 				or.as_ref().map(|e| self.infer(args.next(), e, result));
 			}
-			Expr::Ref(name, id, ref substs) => {
+			Expr::Ref(_, id, ref substs) => {
 				result!(self.infer_value(e.info, id, substs));
 			}
 			Expr::Return(ref ret) => {
@@ -532,20 +534,20 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		}
 
 		// DEBUG
-		let p = param_map.iter().map(|(k,v)| format!("{}: {}, ", self.ctx.path(*k), self.format_ty(v))).fold(String::new(), |mut a, b| {
-	        a.push_str(&b);
-	        a
-	    });
-
-		//self.print(sp, &format!("ref({}) map {}", id.0, p));
+		/*let p = param_map.iter().map(|(k,v)| format!("{}: {}, ", self.ctx.path(*k), self.format_ty(v))).fold(String::new(), |mut a, b| {
+			a.push_str(&b);
+			a
+		});*/
 
 		let ty = self.inst_ty(scheme.ty, &param_map);
 
-	    let map = RefMap {
-	    	params: param_map,
-	    };
+		//self.print(info.span, &format!("ref({}) map {} ty {} scheme {}", id.0, p, self.format_ty(ty), self.format_ty(scheme.ty)));
 
-	    self.info.refs.insert(info.id, map);
+		let map = RefMap {
+			params: param_map,
+		};
+
+		self.info.refs.insert(info.id, map);
 
 		if scheme.value {
 			Level::Value(ty)
@@ -556,7 +558,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 	fn infer_item_shallow(&mut self, item: &'c Item_) -> Scheme<'c> {
 		match item.val {
-			Item::Data(i, ref g, _) => {
+			Item::Data(_, ref g, _) => {
 				let r = self.alloc_ty(Ty_::Ref(item.info.id, Vec::new()));
 				self.infer_generics(g, false, r)
 			}
@@ -582,7 +584,7 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	}
 
 	fn infer_item(&mut self, item: &'c Item_) {
-		let ty = self.tys.get(&item.info.id).unwrap().ty;
+		//let ty = self.tys.get(&item.info.id).unwrap().ty;
 
 		match item.val {
 			Item::Fn(ref d) => {
@@ -609,29 +611,31 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 		for id in ids.iter() {
 			match *self.ctx.node_map.get(id).unwrap() {
 				Lookup::Item(item) => self.infer_item(item),
-				Lookup::TypeParam(p) => (),
+				Lookup::TypeParam(..) => (),
 				_ => panic!(),
 			};
 		}
 		for id in ids.iter() {
 			let ty = self.tys.get(id).unwrap().ty;
-			let (name, span) = self.ctx.info(*id);
+			let (_, span) = self.ctx.info(*id);
 			self.print(span, &format!("item({}) {} :: {}", id.0, self.ctx.path(*id), self.format_ty(ty)));
 		}
 
-		for i in 0..self.info.vars.vars.borrow().len() {
-			let ty = self.info.vars.vars.borrow()[i];
-			match *ty {
+		for (i, ty) in self.info.vars.vars.borrow_mut().iter_mut().enumerate() {
+			match **ty {
 				Ty_::Infer(a) if a == i => {
-					self.error(self.var_spans.borrow()[i], format!("Unconstrained type variable {}", self.format_ty(ty)));
+					self.error(self.var_spans.borrow()[i], format!("Unconstrained type variable {}", format_infer(i)));
+					*ty = self.ctx.ty_err;
 				}
 				_ => (),
 			}
 		}
 
+		// Removed resolved type variables
 		for (_, scheme) in self.tys.iter_mut() {
 			scheme.ty = self.info.vars.inst_ty(self.ctx, scheme.ty, &HashMap::new(), true);
 		}
+
 /*
 		for (_, map) in self.info.refs.iter_mut() {
 			for (_, ty) in map.params.iter_mut() {
@@ -739,11 +743,11 @@ pub fn run<'c>(ctx: &'c Context, node_map: &'c NodeMap<'c>, parents: HashMap<Id,
 		pass.visit_item_block(block);
 	}
 
-    if pass.ctx.ctx.failed() {
-        return;
-    }
+	if pass.ctx.ctx.failed() {
+		return;
+	}
 
-    println!("generating code...");
-    
-    codegen::run(pass.ctx);
+	println!("generating code...");
+	
+	codegen::run(pass.ctx);
 }

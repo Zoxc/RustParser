@@ -1,14 +1,10 @@
 use std::collections::HashMap;
-use ast;
 use ast::*;
 use std::rc::Rc;
-use std::ptr;
 use ty;
 use misc::interned::*;
-use node_map::NodeMap;
-use std::ffi::CString;
 use libc::{c_uint, c_ulonglong};
-use infer::{InferContext, GroupInfo, RefMap};
+use infer::{GroupInfo, RefMap};
 use llvm;
 use llvm::{TypeRef, ValueRef, BasicBlockRef, BuilderRef};
 use codegen::{GenContext, c_str};
@@ -26,6 +22,16 @@ pub struct GenExpr<'g, 'c: 'g> {
 }
 
 impl<'g, 'c> GenExpr<'g, 'c> {
+	fn is_id_fn(&self, id: Id) -> bool {
+		match *self.ctx.infer.node_map.get(&id).unwrap() {
+			Lookup::Item(item) => match item.val {
+				Item::Fn(..) => true,
+				_ => false,
+			},
+			_ => false,
+		}
+	}
+
 	pub fn new_bb(&mut self) -> BasicBlockRef {
 		unsafe {
 			llvm::LLVMAppendBasicBlockInContext(self.ctx.ll_ctx, self.func, c_str("").as_ptr())
@@ -61,13 +67,12 @@ impl<'g, 'c> GenExpr<'g, 'c> {
 		self.ctx.ll_ty(self.fixed_ty(ty))
 	}
 
-	pub fn get_ref(&self, id: Id, map: &RefMap<'c>) -> ValueRef {
+	pub fn get_ref(&self, id: Id, map: &RefMap<'c>) -> String {
 		let new_map = RefMap {
 			params: map.params.iter().map(|(k,v)| (*k, self.fixed_ty(v))).collect()
 		};
 		self.ctx.gen(id, &new_map);
-		let s = self.ctx.mangle(id, &new_map);
-		unsafe { llvm::LLVMGetNamedFunction(self.ctx.ll_mod, c_str(&s).as_ptr()) }
+		self.ctx.mangle(id, &new_map)
 	}
 
 	pub fn expr(&mut self, e: &'c Expr_) -> Option<ValueRef> {
@@ -80,10 +85,22 @@ impl<'g, 'c> GenExpr<'g, 'c> {
 		unsafe {
 			match e.val {
 				Expr::Call(ref f_obj, ref f_args) => {
-					let obj = self.expr(f_obj).unwrap();
-					let mut args: Vec<ValueRef> = f_args.iter().map(|a| self.expr(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
-					args.insert(0, llvm::LLVMConstNull(self.ctx.void_ptr));
-					Some(llvm!(LLVMBuildCall, obj, args.as_ptr(), args.len() as c_uint))
+					match f_obj.val {
+						Expr::Ref(_, id, _) if self.is_id_fn(id) => {
+							let function = self.get_ref(id, self.info.refs.get(&f_obj.info.id).unwrap());
+							let function = llvm::LLVMGetNamedFunction(self.ctx.ll_mod, c_str(&function).as_ptr());
+							let args: Vec<ValueRef> = f_args.iter().map(|a| self.expr(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
+							Some(llvm!(LLVMBuildCall, function, args.as_ptr(), args.len() as c_uint))
+						}
+						_ => {
+							/*
+							let obj = self.expr(f_obj).unwrap();
+							let mut args: Vec<ValueRef> = f_args.iter().map(|a| self.expr(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
+							args.insert(0, llvm::LLVMConstNull(self.ctx.void_ptr));
+							Some(llvm!(LLVMBuildCall, obj, args.as_ptr(), args.len() as c_uint))*/
+							None
+						}
+					}
 				}
 				Expr::Loop(ref b) => {
 					let bb = self.new_bb();
@@ -159,13 +176,20 @@ impl<'g, 'c> GenExpr<'g, 'c> {
 						Some(llvm::LLVMBuildAdd(self.builder, l, r, c_str("add").as_ptr()))
 					}
 				}
-				Expr::Ref(name, id, ref substs) => {
+				Expr::Ref(_, id, _) => {
 					match self.vars.get(&id) {
 						Some(v) => *v,
 						None => {
-							let p = self.get_ref(id, self.info.refs.get(&e.info.id).unwrap());
-							//Some(llvm::LLVMBuildLoad(self.builder, p, c_str("ref").as_ptr()))
-							Some(p)
+							if self.is_id_fn(id) {
+								let function = self.get_ref(id, self.info.refs.get(&e.info.id).unwrap());
+								let function = llvm::LLVMGetNamedFunction(self.ctx.ll_mod, c_str(&function).as_ptr());
+								None
+							} else {
+								None
+							}
+							/*
+							let name = self.get_ref(id, self.info.refs.get(&e.info.id).unwrap());
+							Some(llvm!(LLVMBuildLoad, llvm::LLVMGetNamedGlobal(self.ctx.ll_mod, c_str(&name).as_ptr())))*/
 						}
 					}
 				}

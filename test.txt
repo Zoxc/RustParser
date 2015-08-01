@@ -5,8 +5,9 @@ data test
             
         return b
 
-fn t(test a, b)
+fn t2(test a, b)
 	a = b
+
 fn main()
 
 fn t1[A](A n, c)

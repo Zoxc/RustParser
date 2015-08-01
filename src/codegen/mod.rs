@@ -7,7 +7,7 @@ use ty;
 use infer;
 use infer::{InferContext, RefMap};
 use llvm;
-use llvm::{ContextRef, ValueRef, TypeRef, ModuleRef};
+use llvm::{ContextRef, TypeRef, ModuleRef};
 use libc;
 
 mod expr;
@@ -58,11 +58,6 @@ impl<'c> GenContext<'c> {
 	}
 
 	pub fn fixed_ty<'m>(&self, ty: ty::Ty<'c>, ctx: Ctx<'m, 'c>) -> ty::Ty<'c> {
-
-		let info = infer::Vars {
-			vars: RefCell::new(Vec::new()),
-		};
-
 		ctx.1.inst_ty(&self.infer, ty, &ctx.0.params, false)
 	}
 
@@ -144,7 +139,7 @@ impl<'c> GenContext<'c> {
 						let (params_tys, ll_ty) = match *ty {
 							ty::Ty_::Fn(ref args, ret) => {
 								let params = RefCell::new(HashMap::new());
-								let mut vec: Vec<TypeRef> = args.iter().enumerate().map(|(i, a)| {
+								let vec: Vec<TypeRef> = args.iter().enumerate().map(|(i, a)| {
 									let ty = self.ll_ty(a);
 									(d.params[i].info.id, ty)
 								}).filter(|&(id, a)| {
@@ -158,7 +153,7 @@ impl<'c> GenContext<'c> {
 									a.unwrap()
 								}).collect();
 
-								vec.insert(0, self.void_ptr);
+								//vec.insert(0, self.void_ptr);
 								(params.into_inner(), llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False))
 							}
 							_ => panic!(),
