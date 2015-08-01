@@ -8,7 +8,6 @@ extern crate quickcheck;
 extern crate libc;
 extern crate rustc_llvm as llvm;
 
-use std::rc::Rc;
 use std::io::Read;
 use misc::{Context, Source};
 

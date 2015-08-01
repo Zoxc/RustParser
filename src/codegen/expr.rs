@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use ast;
 use ast::*;
 use std::rc::Rc;
@@ -10,25 +10,25 @@ use std::ffi::CString;
 use libc::{c_uint, c_ulonglong};
 use infer::{InferContext, GroupInfo, RefMap};
 use llvm;
-use llvm::{TypeRef, ContextRef, ValueRef, ModuleRef, BasicBlockRef, BuilderRef};
+use llvm::{TypeRef, ValueRef, BasicBlockRef, BuilderRef};
 use codegen::{GenContext, c_str};
 
-pub struct GenExpr<'g, 'i: 'g, 'c: 'i> {
-	pub ctx: &'g GenContext<'i, 'c>,
+pub struct GenExpr<'g, 'c: 'g> {
+	pub ctx: &'g GenContext<'c>,
 	pub def: Option<&'c FnDef>,
 	pub builder: BuilderRef,
 	pub bb: BasicBlockRef,
 	pub map: &'g RefMap<'c>,
 	pub func: ValueRef,
 	pub info: Rc<GroupInfo<'c>>,
-	pub vars: HashMap<Id, ValueRef>,
+	pub vars: HashMap<Id, Option<ValueRef>>,
 	pub post_loop: Option<BasicBlockRef>,
 }
 
-impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
-	pub fn new_bb(&mut self, s: &str) -> BasicBlockRef {
+impl<'g, 'c> GenExpr<'g, 'c> {
+	pub fn new_bb(&mut self) -> BasicBlockRef {
 		unsafe {
-			llvm::LLVMAppendBasicBlockInContext(self.ctx.ll_ctx, self.func, c_str(s).as_ptr())
+			llvm::LLVMAppendBasicBlockInContext(self.ctx.ll_ctx, self.func, c_str("").as_ptr())
 		}
 	}
 
@@ -71,19 +71,26 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 	}
 
 	pub fn expr(&mut self, e: &'c Expr_) -> Option<ValueRef> {
+		macro_rules! llvm {
+			($s:ident, $($x:expr),*) => {{
+				llvm::$s(self.builder, $($x,)* c_str("").as_ptr())
+			}}
+		}
+
 		unsafe {
 			match e.val {
-				Expr::Call(ref obj, ref f_args) => {
-					self.expr(obj);
-					f_args.iter().map(|a| self.expr(a));
-					None
+				Expr::Call(ref f_obj, ref f_args) => {
+					let obj = self.expr(f_obj).unwrap();
+					let mut args: Vec<ValueRef> = f_args.iter().map(|a| self.expr(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
+					args.insert(0, llvm::LLVMConstNull(self.ctx.void_ptr));
+					Some(llvm!(LLVMBuildCall, obj, args.as_ptr(), args.len() as c_uint))
 				}
 				Expr::Loop(ref b) => {
-					let bb = self.new_bb("loop");
+					let bb = self.new_bb();
 					llvm::LLVMBuildBr(self.builder, bb);
 					self.use_bb(bb);
 					let old_post = self.post_loop;
-					let post_loop = self.new_bb("post-loop");
+					let post_loop = self.new_bb();
 					self.post_loop = Some(post_loop);
 					self.block(b);
 					llvm::LLVMBuildBr(self.builder, bb);
@@ -101,8 +108,8 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 				}
 				Expr::If(ref cond, ref then, ref or) => {
 					let c = self.expr(cond).unwrap();
-					let then_bb = self.new_bb("then");
-					let else_bb = self.new_bb("else");
+					let then_bb = self.new_bb();
+					let else_bb = self.new_bb();
 					llvm::LLVMBuildCondBr(self.builder, c, then_bb, else_bb);
 
 					self.use_bb(then_bb);
@@ -110,7 +117,7 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 
 					let (else_v, post_bb) = match or.as_ref() {
 						Some(e) => {
-							let post_bb = self.new_bb("post-if");
+							let post_bb = self.new_bb();
 							llvm::LLVMBuildBr(self.builder, post_bb);
 							self.use_bb(else_bb);
 							(self.expr(e), post_bb)
@@ -126,7 +133,7 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 
 					self.info.tys.get(&e.info.id).and_then(|ty| {
 						then_v.map(|t| {
-							let phi = llvm::LLVMBuildPhi(self.builder, self.ll_ty(ty).unwrap(), c_str("join").as_ptr());
+							let phi = llvm!(LLVMBuildPhi, self.ll_ty(ty).unwrap());
 							llvm::LLVMAddIncoming(
 								phi,
 								&[t, else_v.unwrap()] as *const ValueRef,
@@ -153,12 +160,14 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 					}
 				}
 				Expr::Ref(name, id, ref substs) => {
-					let p = match self.vars.get(&id) {
+					match self.vars.get(&id) {
 						Some(v) => *v,
-						None => self.get_ref(id, self.info.refs.get(&e.info.id).unwrap()),
-					};
-					//Some(llvm::LLVMBuildLoad(self.builder, p, c_str("ref").as_ptr()))
-					None
+						None => {
+							let p = self.get_ref(id, self.info.refs.get(&e.info.id).unwrap());
+							//Some(llvm::LLVMBuildLoad(self.builder, p, c_str("ref").as_ptr()))
+							Some(p)
+						}
+					}
 				}
 				Expr::Return(ref ret) => {
 					match ret.as_ref().and_then(|v| self.expr(&v)) {
@@ -173,7 +182,7 @@ impl<'g, 'i, 'c> GenExpr<'g, 'i, 'c> {
 				}
 				Expr::Break => {
 					llvm::LLVMBuildBr(self.builder, self.post_loop.unwrap());
-					let bb = self.new_bb("post_break");
+					let bb = self.new_bb();
 					self.use_bb(bb);
 					None
 				}

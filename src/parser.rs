@@ -53,7 +53,7 @@ macro_rules! node_wrap {
 
 struct Parser<'c> {
 	lexer: lexer::Lexer<'c>,
-	last_ended: u32,
+	last_ended: usize,
 }
 
 impl<'c> Parser<'c> {
@@ -256,7 +256,11 @@ impl<'c> Parser<'c> {
 			self.bracket(Bracket::Square, |parser| {
 				parser.seq(Token::Bracket(Bracket::Square, false), |parser| {
 					match parser.tok() {
-						Token::Name(_) => Some(noded!(parser, TypeParam { name: parser.ident() })),
+						Token::Name(_) => Some(noded!(parser, {
+							let name = parser.ident();
+							let generics = parser.generics();
+							TypeParam { name: name, generics: generics }
+						})),
 						_ => None,
 					}
 				})

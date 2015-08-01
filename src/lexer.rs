@@ -6,12 +6,12 @@ use interner::{Interner, Val};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Span {
-	pub start: u32,
-	pub len: u32
+	pub start: usize,
+	pub len: usize
 }
 
 pub const SPAN_ERROR: Span = Span {
-	start: -1i32 as u32,
+	start: -1i32 as usize,
 	len: 0
 };
 
@@ -146,7 +146,7 @@ impl<'c> Lexer<'c> {
 
 		let mut result: Lexer = Lexer {
 			token: Token::End,
-			span: Span { start: 0, len: 0},
+			span: Span { start: source.span_start, len: 0},
 			begin: &src[0],
 			line_start: &src[0],
 			end: &src[src.len() - 1],
@@ -214,7 +214,7 @@ impl<'c> Lexer<'c> {
 	}
 
 	pub fn column(&self) -> Indent {
-		Indent(self.span.start as usize - offset(self.begin, self.line_start))
+		Indent((self.span.start as usize - self.src.span_start) - offset(self.begin, self.line_start))
 	}
 
 	fn msg(&self, span: Span, msg: Msg) {
@@ -223,7 +223,7 @@ impl<'c> Lexer<'c> {
 
 	fn to_slice(&self, span: Span) -> &'c [u8] {
 		unsafe {
-			std::slice::from_raw_parts((self.begin as *const u8 as usize + span.start as usize) as *const u8, span.len as usize)
+			std::slice::from_raw_parts((self.begin as *const u8 as usize + span.start as usize - self.src.span_start) as *const u8, span.len as usize)
 		}
 	}
 
@@ -233,8 +233,8 @@ impl<'c> Lexer<'c> {
 
 	fn span(&self, start: &'c u8, end: &'c u8) -> Span {
 		Span {
-			start: (start as *const u8 as usize - self.begin as *const u8 as usize) as u32,
-			len: offset(start, end) as u32,
+			start: self.src.span_start + start as *const u8 as usize - self.begin as *const u8 as usize,
+			len: offset(start, end),
 		}
 	}
 

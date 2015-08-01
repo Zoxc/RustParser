@@ -1,5 +1,4 @@
 use std;
-use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use parser;
@@ -7,7 +6,7 @@ use lexer;
 use infer;
 use lexer::Span;
 use interner::{Val, Interner};
-use ast::{Ident, Id, Block_, Item_};
+use ast::{Id, Block_, Item_};
 
 macro_rules! intern_type {
     ($n:ident) => {

@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use ast;
 use misc;
-use misc::{Source, Context};
+use misc::Context;
 use misc::interned::*;
 use std::rc::Rc;
 use lexer::Span;
 use std::cell::RefCell;
-use ast::{Id, Info, Ident, FnParam_, Generics, Block_, Expr_, Item, Expr, Item_, Visitor, Lookup};
+use ast::{Id, Info, Generics, Block_, Expr_, Item, Expr, Item_, Visitor, Lookup};
 use ty::{Ty, Ty_, Scheme, Level, TyParam};
 use node_map::NodeMap;
 use recursion;
@@ -651,7 +651,7 @@ impl<'c> InferContext<'c> {
 		}
 		let def = &[id];
 		let ids = self.recursion_map.get(&id).map(|r| &r[..]).unwrap_or(def).to_vec();
-		let mut group = InferGroup {
+		let group = InferGroup {
 			info: GroupInfo {
 				vars: Vars {
 					vars: RefCell::new(Vec::new())
@@ -694,11 +694,11 @@ impl<'c> InferContext<'c> {
 	}
 } 
 
-struct InferPass<'ctx, 'c: 'ctx> {
-	ctx: &'ctx InferContext<'c>,
+struct InferPass<'c> {
+	ctx: InferContext<'c>,
 }
 
-impl<'ctx, 'c> Visitor<'c> for InferPass<'ctx, 'c> {
+impl<'c> Visitor<'c> for InferPass<'c> {
 	// Ignore expressions
 	fn visit_expr(&mut self, _: &'c Expr_) {
 	}
@@ -732,18 +732,18 @@ pub fn run<'c>(ctx: &'c Context, node_map: &'c NodeMap<'c>, parents: HashMap<Id,
 		ty_unit: alloc_ty(&arena, Ty_::Tuple(Vec::new())),
 	};
 
-	let mut pass = InferPass { ctx: &ctx };
+	let mut pass = InferPass { ctx: ctx };
 
-	for src in ctx.ctx.srcs.iter() {
+	for src in pass.ctx.ctx.srcs.iter() {
 		let block = src.ast.as_ref().unwrap();
 		pass.visit_item_block(block);
 	}
 
-    if ctx.ctx.failed() {
+    if pass.ctx.ctx.failed() {
         return;
     }
 
     println!("generating code...");
     
-    codegen::run(&ctx);
+    codegen::run(pass.ctx);
 }

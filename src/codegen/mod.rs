@@ -1,14 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use ast;
 use ast::*;
-use std::rc::Rc;
-use node_map::NodeMap;
 use std::cell::RefCell;
 use std::ffi::CString;
 use ty;
 use infer;
 use infer::{InferContext, RefMap};
-use std::ptr;
 use llvm;
 use llvm::{ContextRef, ValueRef, TypeRef, ModuleRef};
 use libc;
@@ -17,8 +14,8 @@ mod expr;
 
 type Ctx<'m, 'c> = (&'m RefMap<'c>, &'m infer::Vars<'c>);
 
-pub struct GenContext<'i, 'c: 'i> {
-	infer: &'i InferContext<'c>,
+pub struct GenContext<'c> {
+	infer: InferContext<'c>,
 
 	gen_list: RefCell<HashMap<Id, HashSet<Vec<ty::Ty<'c>>>>>,
 
@@ -33,7 +30,7 @@ pub fn c_str(s: &str) -> CString {
 	CString::new(s).unwrap()
 }
 
-impl<'i, 'c> GenContext<'i, 'c> {
+impl<'c> GenContext<'c> {
 	pub fn ll_ty_or_void(&self, ty: ty::Ty<'c>) -> TypeRef {
 		unsafe { self.ll_ty(ty).unwrap_or(llvm::LLVMVoidTypeInContext(self.ll_ctx)) }
 	}
@@ -66,15 +63,15 @@ impl<'i, 'c> GenContext<'i, 'c> {
 			vars: RefCell::new(Vec::new()),
 		};
 
-		ctx.1.inst_ty(self.infer, ty, &ctx.0.params, false)
+		ctx.1.inst_ty(&self.infer, ty, &ctx.0.params, false)
 	}
 
 	pub fn mangle_ty(&self, ty: ty::Ty<'c>, map: &RefMap<'c>) -> String {
 		macro_rules! connect {
-		    ($vec:expr) => {{
-		    	let vec: Vec<String> = $vec.iter().map(|t| self.mangle_ty(t, map)).collect();
-		    	vec.connect(", ")
-		    }}
+			($vec:expr) => {{
+				let vec: Vec<String> = $vec.iter().map(|t| self.mangle_ty(t, map)).collect();
+				vec.connect(", ")
+			}}
 		}
 
 		match *ty {
@@ -94,7 +91,7 @@ impl<'i, 'c> GenContext<'i, 'c> {
 			"".to_string()
 		} else {
 			let vec: Vec<String> = scheme.params.iter().map(|p| self.mangle_ty(map.params.get(&p.id).unwrap(), map)).collect();
-		    format!("[{}]", vec.connect(", "))
+			format!("[{}]", vec.connect(", "))
 		};
 
 		format!("{}{}", self.infer.info(id).0, params)
@@ -132,10 +129,10 @@ impl<'i, 'c> GenContext<'i, 'c> {
 
 		{
 
-			let p = map.params.iter().map(|(k,v)| format!("{}: {}, ", self.infer.path(*k), info.vars.format_ty(self.infer, v))).fold(String::new(), |mut a, b| {
-		        a.push_str(&b);
-		        a
-		    });
+			let p = map.params.iter().map(|(k,v)| format!("{}: {}, ", self.infer.path(*k), info.vars.format_ty(&self.infer, v))).fold(String::new(), |mut a, b| {
+				a.push_str(&b);
+				a
+			});
 
 			println!("gen {} map {{{}}}", self.infer.path(id), p);
 		}
@@ -144,20 +141,34 @@ impl<'i, 'c> GenContext<'i, 'c> {
 			Lookup::Item(item) => match item.val {
 				Item::Fn(ref d) => {
 					unsafe {
-						let ll_ty = match *ty {
+						let (params_tys, ll_ty) = match *ty {
 							ty::Ty_::Fn(ref args, ret) => {
-								let mut vec: Vec<TypeRef> = args.iter().map(|a| self.ll_ty(a)).filter(|a| a.is_some()).map(|a| a.unwrap()).collect();
+								let params = RefCell::new(HashMap::new());
+								let mut vec: Vec<TypeRef> = args.iter().enumerate().map(|(i, a)| {
+									let ty = self.ll_ty(a);
+									(d.params[i].info.id, ty)
+								}).filter(|&(id, a)| {
+									if !a.is_some() {
+										params.borrow_mut().insert(id, None);
+									}
+									a.is_some()
+								}
+								).enumerate().map(|(i, (id, a))| {
+									params.borrow_mut().insert(id, Some(i));
+									a.unwrap()
+								}).collect();
+
 								vec.insert(0, self.void_ptr);
-								llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False)
+								(params.into_inner(), llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False))
 							}
 							_ => panic!(),
 						};
 
-						let f =  llvm::LLVMAddFunction(self.ll_mod,
+						let f = llvm::LLVMAddFunction(self.ll_mod,
 							c_str(&self.mangle(id, map)).as_ptr(),
 							ll_ty);
 
-						let entry = llvm::LLVMAppendBasicBlockInContext(self.ll_ctx, f, c_str("entry").as_ptr());
+						let entry = llvm::LLVMAppendBasicBlockInContext(self.ll_ctx, f, c_str("").as_ptr());
 
 						let builder = llvm::LLVMCreateBuilderInContext(self.ll_ctx);
 
@@ -175,8 +186,8 @@ impl<'i, 'c> GenContext<'i, 'c> {
 							post_loop: None,
 						};
 
-						for i in 0..d.params.len() {
-							gen.vars.insert(d.params[i].info.id, llvm::LLVMGetParam(f, i as libc::c_uint));
+						for (id, i) in params_tys {
+							gen.vars.insert(id, i.map(|i| llvm::LLVMGetParam(f, i as libc::c_uint)));
 						}
 
 						gen.block(&d.block);
@@ -191,7 +202,7 @@ impl<'i, 'c> GenContext<'i, 'c> {
 	}
 }
 
-unsafe fn make_ctx<'i, 'c>(infer: &'i InferContext<'c>) -> GenContext<'i, 'c> {
+unsafe fn make_ctx<'c>(infer: InferContext<'c>) -> GenContext<'c> {
 	// from rustc
 
 	let llcx = llvm::LLVMContextCreate();
@@ -215,11 +226,11 @@ unsafe fn make_ctx<'i, 'c>(infer: &'i InferContext<'c>) -> GenContext<'i, 'c> {
 	}
 }
 
-struct GenPass<'a, 'i: 'a, 'c: 'i> {
-	ctx: &'a GenContext<'i, 'c>,
+struct GenPass<'c> {
+	ctx: GenContext<'c>,
 }
 
-impl<'a, 'ctx, 'c> Visitor<'c> for GenPass<'a, 'ctx, 'c> {
+impl<'c> Visitor<'c> for GenPass<'c> {
 	// Ignore expressions
 	fn visit_expr(&mut self, _: &'c Expr_) {
 	}
@@ -236,13 +247,13 @@ impl<'a, 'ctx, 'c> Visitor<'c> for GenPass<'a, 'ctx, 'c> {
 LLVMWriteBitcodeToFile
 LLVMRustWriteOutputFile
 */
-pub fn run<'i, 'c>(ctx: &'i InferContext<'c>) {
+pub fn run<'i, 'c>(ctx: InferContext<'c>) {
 	unsafe {
 		let ctx = make_ctx(ctx);
 
-		let mut pass = GenPass { ctx: &ctx };
+		let mut pass = GenPass { ctx: ctx };
 
-		for src in ctx.infer.ctx.srcs.iter() {
+		for src in pass.ctx.infer.ctx.srcs.iter() {
 			let block = src.ast.as_ref().unwrap();
 			pass.visit_item_block(block);
 		}
@@ -265,7 +276,7 @@ pub fn run<'i, 'c>(ctx: &'i InferContext<'c>) {
 		let cpm = llvm::LLVMCreatePassManager();
 		//llvm::LLVMRustAddAnalysisPasses(tm, cpm, ctx.ll_mod);
 		//llvm::LLVMRustAddLibraryInfo(cpm, llmod, no_builtins);
-		llvm::LLVMRustPrintModule(cpm, ctx.ll_mod, CString::new("mod.ll").unwrap().as_ptr());
+		llvm::LLVMRustPrintModule(cpm, pass.ctx.ll_mod, CString::new("mod.ll").unwrap().as_ptr());
 		llvm::LLVMDisposePassManager(cpm);
 
 		llvm::LLVMRustDisposeTargetMachine(tm);

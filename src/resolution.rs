@@ -139,11 +139,12 @@ impl<'c> ResolutionPass<'c> {
 
 pub fn run(ctx: &mut Context) -> HashMap<Id, Id> {
 	let parents = RefCell::new(HashMap::new());
+	let mut globals = SymbolTable::new();
 
 	for src in ctx.srcs.iter_mut() {
 		let mut block = src.ast.take().unwrap();
 		{
-			let mut declare_pass = ResolutionPass { declare: true, src: src, id: None, parent: None, parents: &parents, symbols: &mut block.val.symbols };
+			let mut declare_pass = ResolutionPass { declare: true, src: src, id: None, parent: None, parents: &parents, symbols: &mut globals };
 			declare_pass.items(&mut block.val.vals);
 		}
 		src.ast = Some(block);
@@ -152,11 +153,13 @@ pub fn run(ctx: &mut Context) -> HashMap<Id, Id> {
 	for src in ctx.srcs.iter_mut() {
 		let mut block = src.ast.take().unwrap();
 		{
-			let mut lookup_pass = ResolutionPass { declare: false, src: src, id: None, parent: None, parents: &parents, symbols: &mut block.val.symbols };
+			let mut lookup_pass = ResolutionPass { declare: false, src: src, id: None, parent: None, parents: &parents, symbols: &mut globals };
 			lookup_pass.items(&mut block.val.vals);
 		}
 		src.ast = Some(block);
 	}
+
+	ctx.srcs[0].ast.as_mut().unwrap().val.symbols = globals;
 
 	parents.into_inner()
 }

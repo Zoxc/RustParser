@@ -1,5 +1,5 @@
 use lexer::{Span, Spanned};
-use misc::{Context, Name, Num, Op, Source};
+use misc::{Context, Name, Num, Op};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -82,6 +82,7 @@ pub type TypeParam_ = N<TypeParam>;
 #[derive(Clone)]
 pub struct TypeParam {
 	pub name: Ident,
+	pub generics: Generics,
 }
 
 #[derive(Clone)]
@@ -238,7 +239,8 @@ pub trait Visitor<'c>: Sized {
 		visit::visit_item_block(self, block);
 	}
 
-	fn visit_type_param(&mut self, _param: &'c TypeParam_) {
+	fn visit_type_param(&mut self, param: &'c TypeParam_) {
+		self.visit_generics(&param.val.generics);
 	}
 
 	fn visit_generics(&mut self, generics: &'c Generics) {
