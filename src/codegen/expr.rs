@@ -47,15 +47,14 @@ impl<'g, 'c> GenExpr<'g, 'c> {
 	}
 
 	pub fn block(&mut self, b: &'c Block_<Expr_>) -> Option<ValueRef>  {
-		if !b.val.vals.is_empty() {
-			for e in b.val.vals[..].init().iter() {
+		if let Some((last, prefix)) = b.val.vals[..].split_last() {
+			for e in prefix {
 				self.expr(e);
 			};
-		}
 
-		match b.val.vals.last() {
-			Some(r) => self.expr(r),
-			None => None,
+			self.expr(last)
+		} else {
+			None
 		}
 	}
 

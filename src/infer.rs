@@ -108,7 +108,7 @@ impl<'c> Vars<'c> {
 		macro_rules! connect {
 			($vec:expr) => {{
 				let vec: Vec<String> = $vec.iter().map(|t| self.format_ty(ctx, t)).collect();
-				vec.connect(", ")
+				vec.join(", ")
 			}}
 		}
 
@@ -478,17 +478,16 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 	}
 
 	fn infer_block(&mut self, args: Args, b: &'c Block_<Expr_>, result: Option<Ty<'c>>) {
-		if !b.val.vals.is_empty() {
+		if let Some((last, prefix)) = b.val.vals[..].split_last() {
 			let unused_next = args.next();
-			for e in b.val.vals[..].init().iter() {
+			for e in prefix {
 				self.infer(unused_next, e, None);
 			};
-		}
 
-		match b.val.vals.last() {
-			Some(r) => self.infer(args.next(), r, result),
-			None => {result.map(|r| self.unify(b.info.span, r, self.ctx.ty_unit));},
-		};
+			self.infer(args.next(), last, result);
+		} else {
+			result.map(|r| self.unify(b.info.span, r, self.ctx.ty_unit));
+		}
 	}
 
 	fn infer_value(&mut self, info: Info, id: Id, substs: &'c Option<Vec<ast::Ty_>>) -> Ty<'c> {

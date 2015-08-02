@@ -177,7 +177,7 @@ impl<'c> Lexer<'c> {
 				}
 		    }};
 		}
-		
+
 		for c in 0..128 {
 			if is_op(c) {
 				set!(c as char, Lexer::op);
@@ -405,7 +405,7 @@ impl<'c> Lexer<'c> {
 		if b.ignore() {
 			false
 		} else {
-			self.blocks.len() > 1 && self.indent.0 <= b.indent.0 
+			self.blocks.len() > 1 && self.indent.0 <= b.indent.0
 		}
 	}
 
