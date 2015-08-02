@@ -1,5 +1,8 @@
 #![feature(rustc_private, slice_concat_ext, slice_extras)]
 
+#![feature(plugin)]
+#![plugin(clippy)]
+
 extern crate arena;
 
 #[cfg(test)]
