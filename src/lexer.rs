@@ -418,7 +418,7 @@ impl<'c> Lexer<'c> {
 					}
 					else {
 						if report {
-							self.msg(self.span(*pos, self.succ(*pos)), Msg::UnknownChars("\\x00".to_string()));
+							self.msg(self.span(*pos, self.succ(*pos)), Msg::UnknownChars("\\x00".to_owned()));
 						}
 						self.step_(pos);
 					}
@@ -524,7 +524,7 @@ impl<'c> Lexer<'c> {
 			}
 		});
 
-		self.msg(span, Msg::UnknownChars(std::str::from_utf8(self.to_slice(span)).unwrap().to_string()));
+		self.msg(span, Msg::UnknownChars(std::str::from_utf8(self.to_slice(span)).unwrap().to_owned()));
 
 		self.next()
 	}

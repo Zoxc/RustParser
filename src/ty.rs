@@ -20,11 +20,8 @@ impl<'t> Ty_<'t> {
 	}
 
 	pub fn occurs_in(&'t self, t: Ty<'t>) -> bool {
-		let s = match *self {
-			Ty_::Infer(s) => s,
-			_ => panic!(),
-		};
-
+		let s = if let Ty_::Infer(s) = *self { s } else { panic!() };
+		
 		match *t {
 			Ty_::Infer(v) if v == s => true,
 			Ty_::Error | Ty_::Infer(_) | Ty_::Kind(_) => false,

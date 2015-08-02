@@ -282,7 +282,7 @@ impl Source {
 		let cursor = if s.len > 1 {
 			std::iter::repeat("~").take(std::cmp::min(s.len as usize, end - span_start)).collect::<String>()
 		} else {
-			"^".to_string()
+			"^".to_owned()
 		};
 		format!("{}{}\n{}{}\n", pos, line, space, cursor)
 	}

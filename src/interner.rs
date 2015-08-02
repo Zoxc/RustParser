@@ -12,7 +12,7 @@
 //! allows bidirectional lookup; i.e. given a value, one can easily find the
 //! type, and vice versa.
 
-#![allow(dead_code)]
+#![allow(dead_code, len_without_is_empty)]
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -30,7 +30,7 @@ pub struct RcStr {
 impl RcStr {
     pub fn new(string: &str) -> RcStr {
         RcStr {
-            string: Rc::new(string.to_string()),
+            string: Rc::new(string.to_owned()),
         }
     }
 }

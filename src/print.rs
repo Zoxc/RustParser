@@ -7,13 +7,13 @@ fn ident(ctx: &Context, i: Ident) -> String {
 
 fn do_block<T>(ctx: &Context, block: &Block_<N<T>>, f: fn(&Context, &N<T>) -> String) -> String {
 	if block.val.vals.is_empty() {
-		return "".to_string();
+		return "".to_owned();
 	}
 
-	let r: &str = &block.val.vals.iter().map(|e| f(ctx, &e)).collect::<Vec<String>>().connect("\n");
+	let r: &str = &block.val.vals.iter().map(|e| f(ctx, &e)).collect::<Vec<String>>().join("\n");
 
-	let mut s = "\n".to_string();
-	s.push_str(&r.lines().map(|l| format!("    {}", l)).collect::<Vec<String>>().connect("\n"));
+	let mut s = "\n".to_owned();
+	s.push_str(&r.lines().map(|l| format!("    {}", l)).collect::<Vec<String>>().join("\n"));
 
 	s
 }
@@ -24,9 +24,9 @@ fn block(ctx: &Context, block: &Block_<Expr_>) -> String {
 
 fn generics(ctx: &Context, generics: &Generics) -> String {
 	if generics.params.is_empty() {
-		"".to_string()
+		"".to_owned()
 	} else {
-		let p = generics.params.iter().map(|p| format!("{}({})", ident(ctx, p.val.name), p.info.id.0)).collect::<Vec<String>>().connect(", ");
+		let p = generics.params.iter().map(|p| format!("{}({})", ident(ctx, p.val.name), p.info.id.0)).collect::<Vec<String>>().join(", ");
 		format!("[{}]", p)
 	}
 }
@@ -34,10 +34,10 @@ fn generics(ctx: &Context, generics: &Generics) -> String {
 fn substs(ctx: &Context, s: &Option<Vec<Ty_>>) -> String {
 	match *s {
 		Some(ref v) => {
-			let p = v.iter().map(|t| ty(ctx, t)).collect::<Vec<String>>().connect(", ");
+			let p = v.iter().map(|t| ty(ctx, t)).collect::<Vec<String>>().join(", ");
 			format!("[{}]", p)
 		}
-		None => "".to_string()
+		None => "".to_owned()
 	}
 }
 
@@ -49,7 +49,7 @@ fn expr(ctx: &Context, e: &Expr_) -> String {
 	match e.val {
 		Expr::Num(n) => ctx.get_num(n),
 		Expr::Call(ref obj, ref args) => {
-			let a = args.iter().map(|e| expr(ctx, e)).collect::<Vec<String>>().connect(", ");
+			let a = args.iter().map(|e| expr(ctx, e)).collect::<Vec<String>>().join(", ");
 			format!("{}({})", expr(ctx, obj), a)
 		} 
 		Expr::Ref(i, _, ref s) => format!("{}{}", ident(ctx, i), substs(ctx, s)),
@@ -79,7 +79,7 @@ fn ty(ctx: &Context, t: &Ty_) -> String {
 	match t.val {
 		Ty::Error => format!("<error>"),
 		Ty::Ptr(ref t) => format!("{}*", ty(ctx, t)),
-		Ty::Infer => "_".to_string(),
+		Ty::Infer => "_".to_owned(),
 		Ty::Ref(i, _, ref s) => format!("{}{}", ident(ctx, i), substs(ctx, s)),
 	}
 }
@@ -95,6 +95,6 @@ pub fn item(ctx: &Context, e: &Item_) -> String {
 	match e.val {
 		Item::Case(i, ref b) => format!("when {}{}", ident(ctx, i), item_block(ctx, b)),
 		Item::Data(i, ref g, ref b) => format!("data {}{}{}", ident(ctx, i), generics(ctx, g), item_block(ctx, b)),
-		Item::Fn(ref d) => format!("fn {}{}({}){}", ident(ctx, d.name), generics(ctx, &d.generics), d.params.iter().map(|param| fn_param(ctx, param)).collect::<Vec<String>>().connect(", "), block(ctx, &d.block)),
+		Item::Fn(ref d) => format!("fn {}{}({}){}", ident(ctx, d.name), generics(ctx, &d.generics), d.params.iter().map(|param| fn_param(ctx, param)).collect::<Vec<String>>().join(", "), block(ctx, &d.block)),
 	}
 }

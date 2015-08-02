@@ -65,7 +65,7 @@ impl<'c> GenContext<'c> {
 		macro_rules! connect {
 			($vec:expr) => {{
 				let vec: Vec<String> = $vec.iter().map(|t| self.mangle_ty(t, map)).collect();
-				vec.connect(", ")
+				vec.join(", ")
 			}}
 		}
 
@@ -83,10 +83,10 @@ impl<'c> GenContext<'c> {
 		let scheme = &self.infer.type_map.borrow().get(&id).unwrap().0.clone();
 
 		let params = if scheme.params.is_empty() {
-			"".to_string()
+			"".to_owned()
 		} else {
 			let vec: Vec<String> = scheme.params.iter().map(|p| self.mangle_ty(map.params.get(&p.id).unwrap(), map)).collect();
-			format!("[{}]", vec.connect(", "))
+			format!("[{}]", vec.join(", "))
 		};
 
 		format!("{}{}", self.infer.info(id).0, params)
@@ -136,27 +136,26 @@ impl<'c> GenContext<'c> {
 			Lookup::Item(item) => match item.val {
 				Item::Fn(ref d) => {
 					unsafe {
-						let (params_tys, ll_ty) = match *ty {
-							ty::Ty_::Fn(ref args, ret) => {
-								let params = RefCell::new(HashMap::new());
-								let vec: Vec<TypeRef> = args.iter().enumerate().map(|(i, a)| {
-									let ty = self.ll_ty(a);
-									(d.params[i].info.id, ty)
-								}).filter(|&(id, a)| {
-									if !a.is_some() {
-										params.borrow_mut().insert(id, None);
-									}
-									a.is_some()
+						let (params_tys, ll_ty) = if let ty::Ty_::Fn(ref args, ret) = *ty {
+							let params = RefCell::new(HashMap::new());
+							let vec: Vec<TypeRef> = args.iter().enumerate().map(|(i, a)| {
+								let ty = self.ll_ty(a);
+								(d.params[i].info.id, ty)
+							}).filter(|&(id, a)| {
+								if !a.is_some() {
+									params.borrow_mut().insert(id, None);
 								}
-								).enumerate().map(|(i, (id, a))| {
-									params.borrow_mut().insert(id, Some(i));
-									a.unwrap()
-								}).collect();
-
-								//vec.insert(0, self.void_ptr);
-								(params.into_inner(), llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False))
+								a.is_some()
 							}
-							_ => panic!(),
+							).enumerate().map(|(i, (id, a))| {
+								params.borrow_mut().insert(id, Some(i));
+								a.unwrap()
+							}).collect();
+
+							//vec.insert(0, self.void_ptr);
+							(params.into_inner(), llvm::LLVMFunctionType(self.ll_ty_or_void(ret), vec.as_ptr(), vec.len() as libc::c_uint, llvm::False))
+						} else {
+							panic!()
 						};
 
 						let f = llvm::LLVMAddFunction(self.ll_mod,

@@ -72,20 +72,18 @@ impl<'c> Parser<'c> {
 	}
 
 	fn skip_op_prefix(&mut self) {
-		match self.tok() {
-			Token::Op(_) => {
-				if self.lexer.span.len == 1 {
-					self.step();
-				} else {
+		if let Token::Op(_) = self.tok() {
+			if self.lexer.span.len == 1 {
+				self.step();
+			} else {
 				self.last_ended = self.lexer.span.start;
 				self.lexer.span.start += 1;
 				self.lexer.span.len -= 1;
 				self.lexer.token = Token::Op(self.lexer.intern(&self.lexer.ctx.interners.op, self.lexer.span));
-    			//bself.print(&format!("SkipTok {:?}", self.lexer.token));
-					
-				}
+				//bself.print(&format!("SkipTok {:?}", self.lexer.token));	
 			}
-			_ => panic!()
+		} else {
+			panic!()
 		}
 	}
 
@@ -167,7 +165,7 @@ impl<'c> Parser<'c> {
 	}
 
 	fn expected(&mut self, str: &str) {
-		self.msg(self.lexer.span, Msg::Expected(str.to_string(), self.lexer.token));
+		self.msg(self.lexer.span, Msg::Expected(str.to_owned(), self.lexer.token));
 	}
 
 	fn ident(&mut self) -> Ident {
@@ -332,20 +330,15 @@ impl<'c> Parser<'c> {
 
 	fn name_and_type(&mut self) -> (Ident, Ty_) {
 		let ty = self.ty();
-		match self.tok() {
-			Token::Name(_) => {
-				(self.ident(), ty)
-			}
-			_ => {
-				match ty.val {
-					Ty::Ref(ident, _, None) => {
-						(ident, noded!(self, Ty::Infer))
-					}
-					_ => {
-						self.expected("variable name");
-						(Ident(spanned!(self, NAME_ERROR)), noded!(self, Ty::Error))
-					}
-				}
+		
+		if let Token::Name(_) = self.tok() {
+			(self.ident(), ty)
+		} else {
+			if let Ty::Ref(ident, _, None) = ty.val {
+				(ident, noded!(self, Ty::Infer))
+			} else {
+				self.expected("variable name");
+				(Ident(spanned!(self, NAME_ERROR)), noded!(self, Ty::Error))
 			}
 		}
 	}

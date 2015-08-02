@@ -6,15 +6,13 @@ struct DetectReturn {
 
 impl<'c> Visitor<'c> for DetectReturn {
 	fn visit_expr(&mut self, val: &'c Expr_) {
-		match val.val {
-			Expr::Return(_) => self.found = true,
-			_ => ()
-		};
-
 		if self.found == true {
 			return;
 		}
-
+		if let Expr::Return(..) = val.val {
+			self.found = true;
+			return;
+		}
 		visit::visit_expr(self, val);
 	}
 }

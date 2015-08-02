@@ -1,4 +1,9 @@
-#![feature(rustc_private, slice_concat_ext, slice_extras)]
+#![feature(rustc_private, slice_concat_ext, slice_extras, slice_splits)]
+
+#![feature(plugin)]
+#![plugin(clippy)]
+
+#![allow(single_match)]
 
 extern crate arena;
 
@@ -28,10 +33,10 @@ mod codegen;
 fn make_src(ctx: &mut Context, f: &str)  {
     let path = std::path::Path::new(f);
     let mut hw_file = std::fs::File::open(&path).unwrap();
-    let mut data = "".to_string();
+    let mut data = "".to_owned();
     hw_file.read_to_string(&mut data).ok();
 
-    let src = Source::create(ctx, f.to_string(), &data[..]);
+    let src = Source::create(ctx, f.to_owned(), &data[..]);
 
     println!("parsing {}...", f);
 
