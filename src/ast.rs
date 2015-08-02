@@ -103,7 +103,8 @@ pub type Item_ = N<Item>;
 
 #[derive(Clone)]
 pub enum Item {
-	Data(Ident, Generics, Block_<N<Item>>),
+	Case(Ident, Block_<Item_>),
+	Data(Ident, Generics, Block_<Item_>),
 	Fn(FnDef),
 }
 
@@ -161,6 +162,7 @@ pub mod visit {
 
 	pub fn visit_item<'c, T: Visitor<'c>>(this: &mut T, val: &'c Item_) {
 		match val.val {
+			Item::Case(i, ref b) => this.visit_case(val.info, i, b),
 			Item::Data(i, ref g, ref b) => this.visit_data(val.info, i, g, b),
 			Item::Fn(ref d) => this.visit_fn(val.info, d)
 		};
@@ -247,6 +249,10 @@ pub trait Visitor<'c>: Sized {
 		for p in generics.params.iter() {
 			self.visit_type_param(p);
 		}
+	}
+
+	fn visit_case(&mut self, _info: Info, _name: Ident, block: &'c Block_<Item_>) {
+		visit::visit_item_block(self, block);
 	}
 
 	fn visit_data(&mut self, _info: Info, _name: Ident, generics: &'c Generics, block: &'c Block_<Item_>) {

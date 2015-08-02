@@ -558,6 +558,23 @@ impl<'ctx, 'c> InferGroup<'ctx, 'c> {
 
 	fn infer_item_shallow(&mut self, item: &'c Item_) -> Scheme<'c> {
 		match item.val {
+			Item::Case(..) => {
+				match self.ctx.parents.get(&item.info.id) {
+					Some(data) => {
+						let mut r = self.ctx.infer_id(*data);
+						r.value = true;
+						r
+					},
+					None => {
+						self.error(item.info.span, format!("'when' block outside 'data' declaration"));
+						Scheme {
+							ty: self.ctx.ty_err,
+							value: true,
+							params: Vec::new(),
+						}
+					}
+				}
+			},
 			Item::Data(_, ref g, _) => {
 				let r = self.alloc_ty(Ty_::Ref(item.info.id, Vec::new()));
 				self.infer_generics(g, false, r)
@@ -681,6 +698,7 @@ impl<'c> InferContext<'c> {
 		let (ident, span) = match *self.node_map.get(&id).unwrap() {
 			Lookup::Item(item) => (match item.val {
 				Item::Fn(ref d) => d.name,
+				Item::Case(name, _) => name,
 				Item::Data(name, _, _) => name,
 			}, item.info.span),
 			Lookup::FnParam(p) => (p.val.0, p.info.span),

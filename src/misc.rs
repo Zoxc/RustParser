@@ -96,6 +96,7 @@ pub mod interned {
 	interned!(Name: make_name_interner:
 		NAME_ERROR, "<error>";
 		KW_DATA, "data";
+		KW_WHEN, "when";
 		KW_IF, "if";
 		KW_FN, "fn";
 		KW_RETURN, "return";

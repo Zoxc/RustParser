@@ -41,6 +41,12 @@ impl<'c> ResolutionPass<'c> {
 
 	fn item(&mut self, val: &mut Item_) {
 		match val.val {
+			Item::Case(i, ref mut b) => {
+				self.name(val.info.id, i);
+
+				let mut pass = self.wrap(&mut b.val.symbols, val.info.id);
+				pass.items(&mut b.val.vals);
+			}
 			Item::Data(i, ref mut g, ref mut b) => {
 				self.name(val.info.id, i);
 

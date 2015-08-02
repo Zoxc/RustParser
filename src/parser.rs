@@ -281,6 +281,14 @@ impl<'c> Parser<'c> {
 	fn try_item(&mut self) -> Option<Item_> {
 		node_wrap!(self, {
 			match self.tok() {
+				Token::Name(KW_WHEN) => {
+					let baseline = self.lexer.indent;
+					self.step();
+					let ident = self.ident();
+					let block = self.block(baseline, Parser::try_item);
+
+					Some(Item::Case(ident, block))
+				}
 				Token::Name(KW_DATA) => {
 					let baseline = self.lexer.indent;
 					self.step();

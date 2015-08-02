@@ -93,6 +93,7 @@ fn fn_param(ctx: &Context, p: &FnParam_) -> String {
 
 pub fn item(ctx: &Context, e: &Item_) -> String {
 	match e.val {
+		Item::Case(i, ref b) => format!("when {}{}", ident(ctx, i), item_block(ctx, b)),
 		Item::Data(i, ref g, ref b) => format!("data {}{}{}", ident(ctx, i), generics(ctx, g), item_block(ctx, b)),
 		Item::Fn(ref d) => format!("fn {}{}({}){}", ident(ctx, d.name), generics(ctx, &d.generics), d.params.iter().map(|param| fn_param(ctx, param)).collect::<Vec<String>>().connect(", "), block(ctx, &d.block)),
 	}
